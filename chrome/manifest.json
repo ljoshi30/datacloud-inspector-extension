@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Data 360 Inspector",
+  "version": "1.2.463",
+  "description": "Read-only developer tool for Salesforce Data Cloud / Data 360. Reveals API (developer) names on the DLO→DMO mapping canvas and exports Data Stream / DLO / DMO field lists. Nothing leaves your browser.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Toggle Data 360 Inspector",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "permissions": [
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://*.lightning.force.com/*",
+    "https://*.salesforce.com/*",
+    "https://*.salesforce-setup.com/*",
+    "https://*.force.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
