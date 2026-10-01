@@ -1378,224 +1378,7 @@
     render();
   }
 
-  // ===== FOCUS DMO =====
-  // Verify ONE DMO's mappings without tracing the wire spaghetti. Two parts:
-  //   (1) a panel listing that DMO's exact source->target field pairs (authoritative,
-  //       from buildMappingRows()); and
-  //   (2) a "declutter canvas" action that HIDES every OTHER target DMO list + every
-  //       source row NOT mapped to the chosen DMO (display:none), leaving only that
-  //       DMO's handful of wires — clean to trace.
-  // CAVEAT (surfaced to the user): hiding SF's own rows disturbs SF's zoom/pan math
-  // while active, so this is a temporary "verify snapshot" — a prominent Show All
-  // restores everything, and we auto-restore on panel close/teardown.
-  function groupRowsByDmo(rows) {
-    const m = new Map();
-    for (const r of rows) {
-      if (!r || !r.dmo) continue;
-      if (!m.has(r.dmo)) m.set(r.dmo, []);
-      m.get(r.dmo).push(r);
-    }
-    return m;
-  }
-
-  // Normalize a field api name or a row's data-tid to a common key so they match:
-  //   "Address_Contact_Point_Type__c" / "Address Contact Point Type" -> "address contact point type"
-  function normFieldKey(s) { return String(s == null ? "" : s).replace(/__c$/i, "").replace(/[_\s]+/g, " ").trim().toLowerCase(); }
-
-  // Hide everything on the canvas except the chosen DMO + its mapped source rows.
-  // Records each hidden element's prior inline display so restoreCanvas() is exact.
-  var _canvasHidden = [];
-  function restoreCanvas() {
-    for (const pair of _canvasHidden) { try { pair[0].style.setProperty("display", pair[1] || "", ""); } catch (e) {} }
-    _canvasHidden = [];
-  }
-  // Returns the set of normalized source-field keys mapped to >1 DMO ("shared" /
-  // system fields like DataSource, InternalOrganization, key qualifiers). Their wires
-  // dangle to hidden DMOs; hiding these rows removes the stray wires entirely.
-  function sharedSourceKeys(rows) {
-    const byField = new Map(); // normKey -> Set(dmoApi)
-    for (const r of rows) {
-      if (!r.sourceApi || !r.dmo) continue;
-      const k = normFieldKey(r.sourceApi);
-      if (!byField.has(k)) byField.set(k, new Set());
-      byField.get(k).add(r.dmo);
-    }
-    const shared = new Set();
-    for (const [k, set] of byField) if (set.size > 1) shared.add(k);
-    return shared;
-  }
-  // Hide everything except the chosen DMO + its mapped source rows. If hideShared is
-  // true, ALSO hide source rows that map to other DMOs too (removes the stray wires).
-  function hideOtherForDmo(dmoApi, rows, hideShared) {
-    restoreCanvas();
-    if (!dmoApi) return 0;
-    const hide = (el) => { try { const p = el.style.display; el.style.setProperty("display", "none", "important"); _canvasHidden.push([el, p]); } catch (e) {} };
-    // 1. hide OTHER target DMO lists
-    try {
-      for (const listEl of findByTag(TGT_CONTAINER)) {
-        let n = ""; try { n = (listEl.entity && listEl.entity.name) || ""; } catch (e) {}
-        if (n && n !== dmoApi) hide(listEl);
-      }
-    } catch (e) {}
-    // 2. source field keys to KEEP = mapped to this DMO, minus shared ones if requested
-    const shared = hideShared ? sharedSourceKeys(rows) : new Set();
-    const keep = new Set();
-    for (const r of rows) { if (r.dmo === dmoApi && r.sourceApi) { const k = normFieldKey(r.sourceApi); if (!(hideShared && shared.has(k))) keep.add(k); } }
-    // 3. hide source rows whose normalized data-tid isn't in `keep` (skip section headers)
-    const NON_FIELD = /^(Add New Field|Unmapped|Is Mapped|Mapped|Show more|Show less)\b/i;
-    let hid = 0;
-    try {
-      for (const it of findByTag(ITEM)) {
-        if (ancestorOfTag(it, SRC_LIST) == null) continue; // source-side rows only
-        const t = labelOf(it);
-        if (!t || HEADER.test(t) || NON_FIELD.test(t)) continue;
-        if (keep.has(normFieldKey(t))) continue;
-        hide(it); hid++;
-      }
-    } catch (e) {}
-    return hid;
-  }
-
-  var focusPanelEl = null;
-  function closeFocusPanel() { restoreCanvas(); if (focusPanelEl) { try { focusPanelEl.remove(); } catch (e) {} focusPanelEl = null; } }
-
-  function openFocusPanel() {
-    closeFocusPanel();
-    const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-    const rows = (function () { try { return buildMappingRows() || []; } catch (e) { return []; } })();
-    const g = groupRowsByDmo(rows);
-    const opts = [];
-    for (const [dmo, pairs] of g) opts.push({ dmo: dmo, label: (pairs[0] && pairs[0].dmoLabel) || dmo, count: pairs.length });
-    opts.sort((a, b) => String(a.label).toLowerCase().localeCompare(String(b.label).toLowerCase()));
-
-    const panel = document.createElement("div");
-    focusPanelEl = panel;
-    panel.id = "dc-focus-panel";
-    panel.style.cssText = "position:fixed;top:84px;right:24px;width:min(420px,92vw);max-height:80vh;display:flex;flex-direction:column;z-index:2147483646;background:#fff;color:#16325c;border:1px solid #c9cede;border-radius:12px;box-shadow:0 24px 60px rgba(0,0,0,.4);font:13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow:hidden;";
-
-    const hdr = document.createElement("div");
-    hdr.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid #e2e8f0;background:#eff6ff;cursor:move;flex-shrink:0;";
-    hdr.innerHTML = "<div style='font:700 14px -apple-system,sans-serif;color:#0369a1;'>&#128269; Focus DMO &mdash; verify mappings</div>";
-    const closeX = document.createElement("button");
-    closeX.innerHTML = "&times;"; closeX.title = "Close";
-    closeX.style.cssText = "border:none;background:none;font-size:20px;line-height:1;color:#0369a1;cursor:pointer;padding:0 4px;";
-    closeX.onclick = closeFocusPanel;
-    hdr.appendChild(closeX);
-    panel.appendChild(hdr);
-
-    const controls = document.createElement("div");
-    controls.style.cssText = "padding:12px 14px 8px;flex-shrink:0;";
-    panel.appendChild(controls);
-
-    if (!opts.length) {
-      controls.innerHTML = "<div style='color:#64748b;font-size:12px;line-height:1.5'>No mappings found on this canvas yet. If the page is still loading, wait a moment and reopen.</div>";
-      document.body.appendChild(panel);
-      try { makeDraggable(panel, hdr); } catch (e) {}
-      return;
-    }
-
-    const sel = document.createElement("select");
-    sel.style.cssText = "width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;font:13px -apple-system,sans-serif;margin-bottom:8px;";
-    sel.innerHTML = "<option value=''>&mdash; pick a DMO (" + opts.length + " mapped) &mdash;</option>" +
-      opts.map((o) => "<option value='" + esc(o.dmo) + "'>" + esc(o.label) + " (" + o.count + ")</option>").join("");
-    controls.appendChild(sel);
-
-    const search = document.createElement("input");
-    search.type = "text"; search.placeholder = "Filter fields in this DMO…";
-    search.style.cssText = "width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;font:12px -apple-system,sans-serif;display:none;";
-    controls.appendChild(search);
-
-    // Declutter-canvas controls: hide other DMOs + unrelated source rows on the canvas.
-    const declutterRow = document.createElement("div");
-    declutterRow.style.cssText = "display:none;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;";
-    const declutterBtn = document.createElement("button");
-    declutterBtn.textContent = "Declutter canvas";
-    declutterBtn.title = "Hide every other DMO and unrelated source field on the canvas, leaving just this DMO's wires to trace.";
-    declutterBtn.style.cssText = "border:none;border-radius:7px;padding:6px 12px;cursor:pointer;font:600 12px -apple-system,sans-serif;color:#fff;background:linear-gradient(135deg,#14b8a6,#0d9488);";
-    const showAllBtn = document.createElement("button");
-    showAllBtn.textContent = "Show all";
-    showAllBtn.title = "Restore every DMO and field on the canvas.";
-    showAllBtn.style.cssText = "border:1px solid #cbd5e1;border-radius:7px;padding:6px 12px;cursor:pointer;font:600 12px -apple-system,sans-serif;color:#334155;background:#fff;display:none;";
-    const sharedLbl = document.createElement("label");
-    sharedLbl.style.cssText = "display:flex;align-items:center;gap:5px;font-size:11px;color:#475569;cursor:pointer;flex-basis:100%;margin-top:2px;";
-    const sharedChk = document.createElement("input"); sharedChk.type = "checkbox"; sharedChk.checked = true;
-    sharedLbl.appendChild(sharedChk);
-    sharedLbl.appendChild(document.createTextNode(" hide shared system/key fields (removes stray wires)"));
-    declutterRow.appendChild(declutterBtn);
-    declutterRow.appendChild(showAllBtn);
-    declutterRow.appendChild(sharedLbl);
-    controls.appendChild(declutterRow);
-
-    const warnLine = document.createElement("div");
-    warnLine.style.cssText = "display:none;font-size:10.5px;color:#b45309;background:#fffbeb;border-radius:6px;padding:5px 8px;margin-top:7px;line-height:1.4;";
-    warnLine.innerHTML = "Canvas rows are hidden to declutter — SF zoom/pan may act oddly while active. Click <b>Show all</b> (or close) to restore.";
-    controls.appendChild(warnLine);
-
-    const countLine = document.createElement("div");
-    countLine.style.cssText = "font-size:11px;color:#64748b;margin:8px 0 0;";
-    controls.appendChild(countLine);
-
-    const listWrap = document.createElement("div");
-    listWrap.style.cssText = "padding:4px 14px 12px;overflow-y:auto;flex:1;";
-    panel.appendChild(listWrap);
-
-    const foot = document.createElement("div");
-    foot.style.cssText = "padding:8px 14px;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b;background:#f8fafc;flex-shrink:0;";
-    foot.innerHTML = "Reads the authoritative mapping (same as Export). Click a pair to copy <b>source&nbsp;&rarr;&nbsp;target</b> API names.";
-    panel.appendChild(foot);
-
-    let currentPairs = [];
-    function paint(filter) {
-      const q = String(filter || "").trim().toLowerCase();
-      const shown = !q ? currentPairs : currentPairs.filter((p) =>
-        [p.sourceLabel, p.sourceApi, p.targetLabel, p.targetApi].some((v) => String(v || "").toLowerCase().indexOf(q) >= 0));
-      countLine.textContent = currentPairs.length + " mapped field" + (currentPairs.length === 1 ? "" : "s") + (q ? "  ·  " + shown.length + " match" + (shown.length === 1 ? "" : "es") : "");
-      listWrap.innerHTML = "";
-      shown.forEach((p) => {
-        const row = document.createElement("div");
-        row.style.cssText = "border:1px solid #e2e8f0;border-radius:7px;padding:7px 10px;margin-bottom:5px;cursor:pointer;";
-        row.onmouseenter = () => (row.style.background = "#f1f5f9");
-        row.onmouseleave = () => (row.style.background = "#fff");
-        row.innerHTML =
-          "<div style='font-size:12.5px;color:#0f172a;font-weight:600;'>" + esc(p.sourceLabel || p.sourceApi || "(system field)") + " <span style='color:#94a3b8;font-weight:400'>&rarr;</span> " + esc(p.targetLabel || p.targetApi) + "</div>" +
-          "<div style='font:11px SF Mono,Consolas,monospace;color:#64748b;margin-top:2px'>" + esc(p.sourceApi || "(system)") + " &rarr; " + esc(p.targetApi || "") + "</div>";
-        row.onclick = () => {
-          const text = (p.sourceApi || "") + " → " + (p.targetApi || "");
-          try { navigator.clipboard.writeText(text); } catch (e) {}
-          const prev = row.style.background; row.style.background = "#dcfce7";
-          setTimeout(() => { row.style.background = prev || "#fff"; }, 500);
-        };
-        listWrap.appendChild(row);
-      });
-      if (!shown.length) listWrap.innerHTML = "<div style='color:#94a3b8;font-size:12px;padding:6px 2px'>No fields match “" + esc(q) + "”.</div>";
-    }
-
-    let decluttered = false;
-    function setDeclutter(on) {
-      decluttered = on;
-      if (on) { hideOtherForDmo(sel.value, rows, sharedChk.checked); declutterBtn.style.display = "none"; showAllBtn.style.display = ""; warnLine.style.display = "block"; }
-      else { restoreCanvas(); declutterBtn.style.display = ""; showAllBtn.style.display = "none"; warnLine.style.display = "none"; }
-    }
-    declutterBtn.onclick = () => setDeclutter(true);
-    showAllBtn.onclick = () => setDeclutter(false);
-    sharedChk.onchange = () => { if (decluttered) hideOtherForDmo(sel.value, rows, sharedChk.checked); };
-
-    function selectDmo(dmoApi) {
-      setDeclutter(false); // changing DMO restores the canvas first
-      if (!dmoApi) { currentPairs = []; search.style.display = "none"; declutterRow.style.display = "none"; countLine.textContent = ""; listWrap.innerHTML = ""; return; }
-      currentPairs = (g.get(dmoApi) || []).slice().sort((a, b) =>
-        String(a.targetLabel || a.targetApi || "").toLowerCase().localeCompare(String(b.targetLabel || b.targetApi || "").toLowerCase()));
-      search.style.display = currentPairs.length > 8 ? "block" : "none";
-      declutterRow.style.display = "flex";
-      search.value = "";
-      paint("");
-    }
-    sel.onchange = () => selectDmo(sel.value);
-    search.oninput = () => paint(search.value);
-
-    document.body.appendChild(panel);
-    try { makeDraggable(panel, hdr); } catch (e) {}
-  }
+  /* [in-development features removed from public build] */
 
   // Fully remove the tool from the page: inline names off, tooltip + tags gone,
   // export modal closed, control bar removed, timers stopped. Re-running the
@@ -1808,10 +1591,9 @@
       return b;
     };
 
-    const focusIconSvg = "<svg width='14' height='14' viewBox='0 0 16 16' fill='none' stroke='white' stroke-width='1.6'><circle cx='7' cy='7' r='4.2'/><path d='M10.2 10.2L14 14' stroke-linecap='round'/></svg>";
+    /* [in-development features removed from public build] */
     const tog = mkBtn("dc-toggle-btn", "API Tooltip",  "Show API name on hover",  "linear-gradient(135deg,#3b82f6,#2563eb)", tooltipIconSvg, "Hover to see API names");
     const inl = mkBtn("dc-inline-btn", "Pin API names","Pin API names on canvas",  "linear-gradient(135deg,#ec4899,#db2777)", pinIconSvg,     "Pin all on canvas");
-    const foc = mkBtn("dc-focus-btn",  "Focus DMO",     "Isolate one DMO's mappings — dim the rest, list its field pairs", "linear-gradient(135deg,#14b8a6,#0d9488)", focusIconSvg, "Verify one DMO at a time");
     const exp = mkBtn("dc-export-btn", "Export",       "Export mappings",          "linear-gradient(135deg,#f59e0b,#d97706)", exportIconSvg,  "All fields with types");
 
     const separator = document.createElement("div");
@@ -1827,12 +1609,12 @@
 
     tog.onclick = (e) => { e.stopPropagation(); toggle(); };
     inl.onclick = (e) => { e.stopPropagation(); toggleInline(); };
-    foc.onclick = (e) => { e.stopPropagation(); openFocusPanel(); };
+    /* [in-development features removed from public build] */
     exp.onclick = (e) => { e.stopPropagation(); openExport(); };
 
     menu.appendChild(tog);
     menu.appendChild(inl);
-    menu.appendChild(foc);
+    /* [in-development features removed from public build] */
     menu.appendChild(exp);
     menu.appendChild(separator);
     menu.appendChild(dismissRow);
