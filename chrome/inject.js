@@ -1378,6 +1378,189 @@
     render();
   }
 
+  // ===== FOCUS DMO =====
+  // The canvas wire spaghetti is unreadable when many DMOs are mapped. This picks
+  // ONE target DMO and (a) lists its exact source->target pairs in a panel, (b) dims
+  // every unrelated field row + highlights the involved ones, (c) click a pair to
+  // scroll both ends into view and flash them. Pure DOM dim/highlight — never touches
+  // SF's wires or data. All pairs come from buildMappingRows() (authoritative).
+  function groupRowsByDmo(rows) {
+    const m = new Map();
+    for (const r of rows) {
+      if (!r || !r.dmo) continue;
+      if (!m.has(r.dmo)) m.set(r.dmo, []);
+      m.get(r.dmo).push(r);
+    }
+    return m;
+  }
+
+  // Index every rendered canvas row (source + target) by the api name our resolvers
+  // assign it, so Focus can find a row element from a field api name. Mirrors the
+  // same per-list, collision-aware resolution redraw() uses.
+  function indexCanvasRowsByApi() {
+    const byApi = new Map(); // apiName -> [row elements]
+    const add = (api, el) => { if (!api || !el) return; if (!byApi.has(api)) byApi.set(api, []); byApi.get(api).push(el); };
+    const NON_FIELD = /^(Add New Field|Unmapped|Is Mapped|Mapped|Show more|Show less)\b/i;
+    const NON_FIELD_TID = /^(add-new-field-btn|.*-btn|entity-list|search-input|main-container)$/i;
+    // SOURCE rows
+    try {
+      const smset = mappedSourceSet();
+      for (const listEl of findByTag(SRC_LIST)) {
+        const { map, labelNames, entityName } = entityFieldMap(listEl);
+        const attrApis = attrApiNames(listEl);
+        const rows = findByTag(ITEM).filter((it) => {
+          if (ancestorOfTag(it, SRC_LIST) !== listEl) return false;
+          const t = labelOf(it);
+          return t && !HEADER.test(t) && !NON_FIELD.test(t) && !NON_FIELD_TID.test(t);
+        });
+        const useLabels = map.size > 0;
+        const nextForLabel = makeCollisionResolver(labelNames || new Map(), smset, entityName);
+        for (let i = 0; i < rows.length; i++) {
+          const label = labelOf(rows[i]);
+          const resolved = useLabels ? nextForLabel(label) : null;
+          add(resolved ? resolved.api : attrApis[i], rows[i]);
+        }
+      }
+    } catch (e) {}
+    // TARGET rows
+    try {
+      const mset = mappedTargetSet();
+      for (const { listEl, map, labelNames, entityName } of targetLists()) {
+        const items = itemsUnder(listEl).filter((it) => {
+          const t = labelOf(it);
+          return t && !HEADER.test(t) && !NON_FIELD.test(t) && !NON_FIELD_TID.test(t);
+        });
+        const nextForLabelTarget = makeTargetResolver(labelNames || new Map(), mset, entityName);
+        for (const it of items) {
+          const label = labelOf(it);
+          const resolved = nextForLabelTarget(label);
+          add(resolved ? resolved.api : lookupByLabel(map, label), it);
+        }
+      }
+    } catch (e) {}
+    return byApi;
+  }
+
+  // Add a style block (once) that dims non-focused rows + highlights focused ones.
+  // We tag rows via a data attribute on the ITEM host so CSS inside each shadow root
+  // isn't needed — we set inline styles directly instead (shadow-safe).
+  var _focusedRows = [];
+  function clearFocusStyles() {
+    for (const el of _focusedRows) {
+      try { el.style.removeProperty("outline"); el.style.removeProperty("background"); el.style.removeProperty("opacity"); el.style.removeProperty("border-radius"); } catch (e) {}
+    }
+    _focusedRows = [];
+  }
+  function applyFocus(dmoApi, rows) {
+    clearFocusStyles();
+    const want = { source: new Set(), target: new Set() };
+    for (const r of rows) { if (r.dmo === dmoApi) { if (r.sourceApi) want.source.add(r.sourceApi); if (r.targetApi) want.target.add(r.targetApi); } }
+    const idx = indexCanvasRowsByApi();
+    const involved = new Set();
+    for (const api of want.source) (idx.get(api) || []).forEach((el) => involved.add(el));
+    for (const api of want.target) (idx.get(api) || []).forEach((el) => involved.add(el));
+    // dim everything, then spotlight the involved rows
+    let allRows = [];
+    try { allRows = findByTag(ITEM).filter((it) => { const t = labelOf(it); return t && !HEADER.test(t); }); } catch (e) {}
+    for (const el of allRows) {
+      try {
+        if (involved.has(el)) { el.style.setProperty("outline", "2px solid #2563eb", "important"); el.style.setProperty("background", "rgba(37,99,235,.08)", "important"); el.style.setProperty("border-radius", "6px", "important"); el.style.setProperty("opacity", "1", "important"); }
+        else { el.style.setProperty("opacity", ".28", "important"); }
+        _focusedRows.push(el);
+      } catch (e) {}
+    }
+    return involved.size;
+  }
+  function jumpToPair(sourceApi, targetApi) {
+    const idx = indexCanvasRowsByApi();
+    [sourceApi, targetApi].forEach((api) => {
+      const els = idx.get(api) || [];
+      if (!els.length) return;
+      const el = els[0];
+      try { el.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) { try { el.scrollIntoView(); } catch (e2) {} }
+      try {
+        const prevBg = el.style.background;
+        el.style.setProperty("background", "rgba(234,179,8,.45)", "important");
+        setTimeout(() => { try { el.style.setProperty("background", "rgba(37,99,235,.08)", "important"); } catch (e) {} }, 1100);
+      } catch (e) {}
+    });
+  }
+
+  var focusPanelEl = null;
+  function closeFocusPanel() { clearFocusStyles(); if (focusPanelEl) { try { focusPanelEl.remove(); } catch (e) {} focusPanelEl = null; } }
+
+  function openFocusPanel() {
+    closeFocusPanel();
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+    const rows = (function () { try { return buildMappingRows() || []; } catch (e) { return []; } })();
+    const g = groupRowsByDmo(rows);
+    const opts = [];
+    for (const [dmo, pairs] of g) opts.push({ dmo: dmo, label: (pairs[0] && pairs[0].dmoLabel) || dmo, count: pairs.length });
+    opts.sort((a, b) => String(a.label).toLowerCase().localeCompare(String(b.label).toLowerCase()));
+
+    const panel = document.createElement("div");
+    focusPanelEl = panel;
+    panel.id = "dc-focus-panel";
+    panel.style.cssText = "position:fixed;top:84px;right:24px;width:min(380px,92vw);max-height:78vh;display:flex;flex-direction:column;z-index:2147483646;background:#fff;color:#16325c;border:1px solid #c9cede;border-radius:12px;box-shadow:0 24px 60px rgba(0,0,0,.4);font:13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow:hidden;";
+
+    const hdr = document.createElement("div");
+    hdr.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid #e2e8f0;background:#eff6ff;cursor:move;";
+    hdr.innerHTML = "<div style='font:700 14px -apple-system,sans-serif;color:#0369a1;'>&#128269; Focus DMO</div>";
+    const closeX = document.createElement("button");
+    closeX.innerHTML = "&times;"; closeX.title = "Close";
+    closeX.style.cssText = "border:none;background:none;font-size:20px;line-height:1;color:#0369a1;cursor:pointer;padding:0 4px;";
+    closeX.onclick = closeFocusPanel;
+    hdr.appendChild(closeX);
+    panel.appendChild(hdr);
+
+    const body = document.createElement("div");
+    body.style.cssText = "padding:12px 14px;overflow-y:auto;";
+    panel.appendChild(body);
+
+    if (!opts.length) {
+      body.innerHTML = "<div style='color:#64748b;font-size:12px;line-height:1.5'>No mappings found on this canvas yet. If the page is still loading, wait a moment and reopen.</div>";
+      document.body.appendChild(panel);
+      try { makeDraggable(panel, hdr); } catch (e) {}
+      return;
+    }
+
+    const sel = document.createElement("select");
+    sel.style.cssText = "width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;font:13px -apple-system,sans-serif;margin-bottom:10px;";
+    sel.innerHTML = "<option value=''>&mdash; pick a DMO to focus &mdash;</option>" +
+      opts.map((o) => "<option value='" + esc(o.dmo) + "'>" + esc(o.label) + " (" + o.count + ")</option>").join("");
+    body.appendChild(sel);
+
+    const listWrap = document.createElement("div");
+    body.appendChild(listWrap);
+
+    const foot = document.createElement("div");
+    foot.style.cssText = "padding:8px 14px;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b;background:#f8fafc;";
+    foot.textContent = "Unrelated rows dim; involved rows highlight. Click a pair to jump to it.";
+    panel.appendChild(foot);
+
+    function renderList(dmoApi) {
+      if (!dmoApi) { listWrap.innerHTML = ""; clearFocusStyles(); return; }
+      const pairs = (g.get(dmoApi) || []).slice().sort((a, b) => String(a.targetLabel || "").toLowerCase().localeCompare(String(b.targetLabel || "").toLowerCase()));
+      const n = applyFocus(dmoApi, rows);
+      listWrap.innerHTML = "<div style='font-size:11px;color:#64748b;margin:0 0 6px'>" + pairs.length + " mapped field" + (pairs.length === 1 ? "" : "s") + " &middot; " + n + " row" + (n === 1 ? "" : "s") + " highlighted on canvas</div>";
+      pairs.forEach((p) => {
+        const row = document.createElement("div");
+        row.style.cssText = "border:1px solid #e2e8f0;border-radius:7px;padding:6px 9px;margin-bottom:5px;cursor:pointer;";
+        row.onmouseenter = () => (row.style.background = "#f1f5f9");
+        row.onmouseleave = () => (row.style.background = "#fff");
+        row.innerHTML =
+          "<div style='font-size:12px;color:#0f172a;'>" + esc(p.sourceLabel || p.sourceApi || "(system)") + " <span style='color:#94a3b8'>&rarr;</span> " + esc(p.targetLabel || p.targetApi) + "</div>" +
+          "<div style='font:11px SF Mono,Consolas,monospace;color:#64748b;margin-top:2px'>" + esc(p.sourceApi || "&mdash;") + " &rarr; " + esc(p.targetApi || "") + "</div>";
+        row.onclick = () => jumpToPair(p.sourceApi, p.targetApi);
+        listWrap.appendChild(row);
+      });
+    }
+    sel.onchange = () => renderList(sel.value);
+
+    document.body.appendChild(panel);
+    try { makeDraggable(panel, hdr); } catch (e) {}
+  }
+
   // Fully remove the tool from the page: inline names off, tooltip + tags gone,
   // export modal closed, control bar removed, timers stopped. Re-running the
   // bookmarklet/snippet re-creates everything.
@@ -1397,6 +1580,8 @@
     } catch (e) {}
     // Remove transform view
     try { if (typeof closeTransformView === "function") closeTransformView(); } catch (e) {}
+    // Restore any rows dimmed/highlighted by Focus DMO (inline styles on SF rows).
+    try { if (typeof closeFocusPanel === "function") closeFocusPanel(); } catch (e) {}
     try { if (navPoll) { clearInterval(navPoll); navPoll = null; } } catch (e) {}
     try { var bar = document.getElementById("dc-bar"); if (bar) bar.remove(); } catch (e) {}
     // Nuclear cleanup: remove any remaining elements our tool created
@@ -1587,8 +1772,10 @@
       return b;
     };
 
+    const focusIconSvg = "<svg width='14' height='14' viewBox='0 0 16 16' fill='none' stroke='white' stroke-width='1.6'><circle cx='7' cy='7' r='4.2'/><path d='M10.2 10.2L14 14' stroke-linecap='round'/></svg>";
     const tog = mkBtn("dc-toggle-btn", "API Tooltip",  "Show API name on hover",  "linear-gradient(135deg,#3b82f6,#2563eb)", tooltipIconSvg, "Hover to see API names");
     const inl = mkBtn("dc-inline-btn", "Pin API names","Pin API names on canvas",  "linear-gradient(135deg,#ec4899,#db2777)", pinIconSvg,     "Pin all on canvas");
+    const foc = mkBtn("dc-focus-btn",  "Focus DMO",     "Isolate one DMO's mappings — dim the rest, list its field pairs", "linear-gradient(135deg,#14b8a6,#0d9488)", focusIconSvg, "Verify one DMO at a time");
     const exp = mkBtn("dc-export-btn", "Export",       "Export mappings",          "linear-gradient(135deg,#f59e0b,#d97706)", exportIconSvg,  "All fields with types");
 
     const separator = document.createElement("div");
@@ -1604,10 +1791,12 @@
 
     tog.onclick = (e) => { e.stopPropagation(); toggle(); };
     inl.onclick = (e) => { e.stopPropagation(); toggleInline(); };
+    foc.onclick = (e) => { e.stopPropagation(); openFocusPanel(); };
     exp.onclick = (e) => { e.stopPropagation(); openExport(); };
 
     menu.appendChild(tog);
     menu.appendChild(inl);
+    menu.appendChild(foc);
     menu.appendChild(exp);
     menu.appendChild(separator);
     menu.appendChild(dismissRow);
