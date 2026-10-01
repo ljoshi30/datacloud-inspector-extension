@@ -1163,6 +1163,7 @@
           targetLabel: safeGet(f, "label") || "",
           targetApi: targetApi,
           targetType: (function () { const t = safeGet(f, "type"); return t == null ? "" : String(t); })(),
+          targetIsPrimaryKey: !!safeGet(f, "primaryKey"), // authoritative PK flag (not guessed)
         });
       }
     }
@@ -1399,7 +1400,7 @@
     } catch (e) {}
     // Remove transform view
     try { if (typeof closeTransformView === "function") closeTransformView(); } catch (e) {}
-    // Restore any rows dimmed/highlighted by Focus DMO (inline styles on SF rows).
+    // Close the Focus DMO panel if open (guarded — stripped from public build).
     try { if (typeof closeFocusPanel === "function") closeFocusPanel(); } catch (e) {}
     try { if (navPoll) { clearInterval(navPoll); navPoll = null; } } catch (e) {}
     try { var bar = document.getElementById("dc-bar"); if (bar) bar.remove(); } catch (e) {}
