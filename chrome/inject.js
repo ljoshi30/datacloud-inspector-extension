@@ -1100,11 +1100,23 @@
     const byLabel = new Map();
     const labelCounts = new Map();
     const objByLabel = new Map(); // source-object label -> {name,label}
+    const srcPkSet = {};          // source field api names that are the DLO's primary key
     for (const listEl of findVisibleByTag(SRC_CONTAINER)) {
       let ent = null; try { ent = listEl.entity; } catch (e) {}
       const dlo = (ent && safeGet(ent, "name")) || "";
       const dloLabel = (ent && safeGet(ent, "label")) || "";
       if (dloLabel) objByLabel.set(dloLabel, { name: dlo, label: dloLabel });
+      // Source PK: field.isPrimaryKey on the source entity's fields (confirmed via
+      // probe — e.g. contact_key__c on the DLO). Keyed by field api name.
+      try {
+        const efs = ent && safeGet(ent, "fields");
+        if (efs && typeof efs.length === "number") {
+          for (let k = 0; k < efs.length; k++) {
+            const ef = safeGet(efs, k); if (!ef) continue;
+            if (safeGet(ef, "isPrimaryKey")) { const nm = safeGet(ef, "name"); if (nm) srcPkSet[String(nm)] = true; }
+          }
+        }
+      } catch (e) {}
       const { map, typeMap } = entityFieldMap(listEl);
       for (const [label, name] of map) {
         labelCounts.set(label, (labelCounts.get(label) || 0) + 1);
@@ -1162,6 +1174,7 @@
         rows.push({
           srcObj: s.srcObj, srcObjLabel: s.srcObjLabel,
           sourceLabel: sourceLabel, sourceApi: s.sourceApi, sourceType: s.sourceType || "",
+          sourceIsPrimaryKey: !!(s.sourceApi && srcPkSet[String(s.sourceApi)]),
           dmo, dmoLabel,
           targetLabel: safeGet(f, "label") || "",
           targetApi: targetApi,
