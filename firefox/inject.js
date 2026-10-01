@@ -1379,11 +1379,12 @@
   }
 
   // ===== FOCUS DMO =====
-  // The canvas wire spaghetti is unreadable when many DMOs are mapped. This picks
-  // ONE target DMO and (a) lists its exact source->target pairs in a panel, (b) dims
-  // every unrelated field row + highlights the involved ones, (c) click a pair to
-  // scroll both ends into view and flash them. Pure DOM dim/highlight — never touches
-  // SF's wires or data. All pairs come from buildMappingRows() (authoritative).
+  // Verify ONE DMO's mappings without tracing the wire spaghetti: pick a target DMO,
+  // read its exact source->target field pairs as a clean, searchable list. All pairs
+  // come from buildMappingRows() (the authoritative container.mapping[], same data the
+  // export uses). Read-only; shows a panel only — never touches SF's wires or data.
+  // (We deliberately do NOT dim canvas rows: it can't dim the WIRES — the real noise —
+  // so it didn't declutter, and shared field names like Id__c over-matched across DMOs.)
   function groupRowsByDmo(rows) {
     const m = new Map();
     for (const r of rows) {
@@ -1394,100 +1395,8 @@
     return m;
   }
 
-  // Index every rendered canvas row (source + target) by the api name our resolvers
-  // assign it, so Focus can find a row element from a field api name. Mirrors the
-  // same per-list, collision-aware resolution redraw() uses.
-  function indexCanvasRowsByApi() {
-    const byApi = new Map(); // apiName -> [row elements]
-    const add = (api, el) => { if (!api || !el) return; if (!byApi.has(api)) byApi.set(api, []); byApi.get(api).push(el); };
-    const NON_FIELD = /^(Add New Field|Unmapped|Is Mapped|Mapped|Show more|Show less)\b/i;
-    const NON_FIELD_TID = /^(add-new-field-btn|.*-btn|entity-list|search-input|main-container)$/i;
-    // SOURCE rows
-    try {
-      const smset = mappedSourceSet();
-      for (const listEl of findByTag(SRC_LIST)) {
-        const { map, labelNames, entityName } = entityFieldMap(listEl);
-        const attrApis = attrApiNames(listEl);
-        const rows = findByTag(ITEM).filter((it) => {
-          if (ancestorOfTag(it, SRC_LIST) !== listEl) return false;
-          const t = labelOf(it);
-          return t && !HEADER.test(t) && !NON_FIELD.test(t) && !NON_FIELD_TID.test(t);
-        });
-        const useLabels = map.size > 0;
-        const nextForLabel = makeCollisionResolver(labelNames || new Map(), smset, entityName);
-        for (let i = 0; i < rows.length; i++) {
-          const label = labelOf(rows[i]);
-          const resolved = useLabels ? nextForLabel(label) : null;
-          add(resolved ? resolved.api : attrApis[i], rows[i]);
-        }
-      }
-    } catch (e) {}
-    // TARGET rows
-    try {
-      const mset = mappedTargetSet();
-      for (const { listEl, map, labelNames, entityName } of targetLists()) {
-        const items = itemsUnder(listEl).filter((it) => {
-          const t = labelOf(it);
-          return t && !HEADER.test(t) && !NON_FIELD.test(t) && !NON_FIELD_TID.test(t);
-        });
-        const nextForLabelTarget = makeTargetResolver(labelNames || new Map(), mset, entityName);
-        for (const it of items) {
-          const label = labelOf(it);
-          const resolved = nextForLabelTarget(label);
-          add(resolved ? resolved.api : lookupByLabel(map, label), it);
-        }
-      }
-    } catch (e) {}
-    return byApi;
-  }
-
-  // Add a style block (once) that dims non-focused rows + highlights focused ones.
-  // We tag rows via a data attribute on the ITEM host so CSS inside each shadow root
-  // isn't needed — we set inline styles directly instead (shadow-safe).
-  var _focusedRows = [];
-  function clearFocusStyles() {
-    for (const el of _focusedRows) {
-      try { el.style.removeProperty("outline"); el.style.removeProperty("background"); el.style.removeProperty("opacity"); el.style.removeProperty("border-radius"); } catch (e) {}
-    }
-    _focusedRows = [];
-  }
-  function applyFocus(dmoApi, rows) {
-    clearFocusStyles();
-    const want = { source: new Set(), target: new Set() };
-    for (const r of rows) { if (r.dmo === dmoApi) { if (r.sourceApi) want.source.add(r.sourceApi); if (r.targetApi) want.target.add(r.targetApi); } }
-    const idx = indexCanvasRowsByApi();
-    const involved = new Set();
-    for (const api of want.source) (idx.get(api) || []).forEach((el) => involved.add(el));
-    for (const api of want.target) (idx.get(api) || []).forEach((el) => involved.add(el));
-    // dim everything, then spotlight the involved rows
-    let allRows = [];
-    try { allRows = findByTag(ITEM).filter((it) => { const t = labelOf(it); return t && !HEADER.test(t); }); } catch (e) {}
-    for (const el of allRows) {
-      try {
-        if (involved.has(el)) { el.style.setProperty("outline", "2px solid #2563eb", "important"); el.style.setProperty("background", "rgba(37,99,235,.08)", "important"); el.style.setProperty("border-radius", "6px", "important"); el.style.setProperty("opacity", "1", "important"); }
-        else { el.style.setProperty("opacity", ".28", "important"); }
-        _focusedRows.push(el);
-      } catch (e) {}
-    }
-    return involved.size;
-  }
-  function jumpToPair(sourceApi, targetApi) {
-    const idx = indexCanvasRowsByApi();
-    [sourceApi, targetApi].forEach((api) => {
-      const els = idx.get(api) || [];
-      if (!els.length) return;
-      const el = els[0];
-      try { el.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) { try { el.scrollIntoView(); } catch (e2) {} }
-      try {
-        const prevBg = el.style.background;
-        el.style.setProperty("background", "rgba(234,179,8,.45)", "important");
-        setTimeout(() => { try { el.style.setProperty("background", "rgba(37,99,235,.08)", "important"); } catch (e) {} }, 1100);
-      } catch (e) {}
-    });
-  }
-
   var focusPanelEl = null;
-  function closeFocusPanel() { clearFocusStyles(); if (focusPanelEl) { try { focusPanelEl.remove(); } catch (e) {} focusPanelEl = null; } }
+  function closeFocusPanel() { if (focusPanelEl) { try { focusPanelEl.remove(); } catch (e) {} focusPanelEl = null; } }
 
   function openFocusPanel() {
     closeFocusPanel();
@@ -1501,11 +1410,11 @@
     const panel = document.createElement("div");
     focusPanelEl = panel;
     panel.id = "dc-focus-panel";
-    panel.style.cssText = "position:fixed;top:84px;right:24px;width:min(380px,92vw);max-height:78vh;display:flex;flex-direction:column;z-index:2147483646;background:#fff;color:#16325c;border:1px solid #c9cede;border-radius:12px;box-shadow:0 24px 60px rgba(0,0,0,.4);font:13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow:hidden;";
+    panel.style.cssText = "position:fixed;top:84px;right:24px;width:min(420px,92vw);max-height:80vh;display:flex;flex-direction:column;z-index:2147483646;background:#fff;color:#16325c;border:1px solid #c9cede;border-radius:12px;box-shadow:0 24px 60px rgba(0,0,0,.4);font:13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow:hidden;";
 
     const hdr = document.createElement("div");
-    hdr.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid #e2e8f0;background:#eff6ff;cursor:move;";
-    hdr.innerHTML = "<div style='font:700 14px -apple-system,sans-serif;color:#0369a1;'>&#128269; Focus DMO</div>";
+    hdr.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid #e2e8f0;background:#eff6ff;cursor:move;flex-shrink:0;";
+    hdr.innerHTML = "<div style='font:700 14px -apple-system,sans-serif;color:#0369a1;'>&#128269; Focus DMO &mdash; verify mappings</div>";
     const closeX = document.createElement("button");
     closeX.innerHTML = "&times;"; closeX.title = "Close";
     closeX.style.cssText = "border:none;background:none;font-size:20px;line-height:1;color:#0369a1;cursor:pointer;padding:0 4px;";
@@ -1513,49 +1422,77 @@
     hdr.appendChild(closeX);
     panel.appendChild(hdr);
 
-    const body = document.createElement("div");
-    body.style.cssText = "padding:12px 14px;overflow-y:auto;";
-    panel.appendChild(body);
+    const controls = document.createElement("div");
+    controls.style.cssText = "padding:12px 14px 8px;flex-shrink:0;";
+    panel.appendChild(controls);
 
     if (!opts.length) {
-      body.innerHTML = "<div style='color:#64748b;font-size:12px;line-height:1.5'>No mappings found on this canvas yet. If the page is still loading, wait a moment and reopen.</div>";
+      controls.innerHTML = "<div style='color:#64748b;font-size:12px;line-height:1.5'>No mappings found on this canvas yet. If the page is still loading, wait a moment and reopen.</div>";
       document.body.appendChild(panel);
       try { makeDraggable(panel, hdr); } catch (e) {}
       return;
     }
 
     const sel = document.createElement("select");
-    sel.style.cssText = "width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;font:13px -apple-system,sans-serif;margin-bottom:10px;";
-    sel.innerHTML = "<option value=''>&mdash; pick a DMO to focus &mdash;</option>" +
+    sel.style.cssText = "width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;font:13px -apple-system,sans-serif;margin-bottom:8px;";
+    sel.innerHTML = "<option value=''>&mdash; pick a DMO (" + opts.length + " mapped) &mdash;</option>" +
       opts.map((o) => "<option value='" + esc(o.dmo) + "'>" + esc(o.label) + " (" + o.count + ")</option>").join("");
-    body.appendChild(sel);
+    controls.appendChild(sel);
+
+    const search = document.createElement("input");
+    search.type = "text"; search.placeholder = "Filter fields in this DMO…";
+    search.style.cssText = "width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;font:12px -apple-system,sans-serif;display:none;";
+    controls.appendChild(search);
+
+    const countLine = document.createElement("div");
+    countLine.style.cssText = "font-size:11px;color:#64748b;margin:8px 0 0;";
+    controls.appendChild(countLine);
 
     const listWrap = document.createElement("div");
-    body.appendChild(listWrap);
+    listWrap.style.cssText = "padding:4px 14px 12px;overflow-y:auto;flex:1;";
+    panel.appendChild(listWrap);
 
     const foot = document.createElement("div");
-    foot.style.cssText = "padding:8px 14px;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b;background:#f8fafc;";
-    foot.textContent = "Unrelated rows dim; involved rows highlight. Click a pair to jump to it.";
+    foot.style.cssText = "padding:8px 14px;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b;background:#f8fafc;flex-shrink:0;";
+    foot.innerHTML = "Reads the authoritative mapping (same as Export). Click a pair to copy <b>source&nbsp;&rarr;&nbsp;target</b> API names.";
     panel.appendChild(foot);
 
-    function renderList(dmoApi) {
-      if (!dmoApi) { listWrap.innerHTML = ""; clearFocusStyles(); return; }
-      const pairs = (g.get(dmoApi) || []).slice().sort((a, b) => String(a.targetLabel || "").toLowerCase().localeCompare(String(b.targetLabel || "").toLowerCase()));
-      const n = applyFocus(dmoApi, rows);
-      listWrap.innerHTML = "<div style='font-size:11px;color:#64748b;margin:0 0 6px'>" + pairs.length + " mapped field" + (pairs.length === 1 ? "" : "s") + " &middot; " + n + " row" + (n === 1 ? "" : "s") + " highlighted on canvas</div>";
-      pairs.forEach((p) => {
+    let currentPairs = [];
+    function paint(filter) {
+      const q = String(filter || "").trim().toLowerCase();
+      const shown = !q ? currentPairs : currentPairs.filter((p) =>
+        [p.sourceLabel, p.sourceApi, p.targetLabel, p.targetApi].some((v) => String(v || "").toLowerCase().indexOf(q) >= 0));
+      countLine.textContent = currentPairs.length + " mapped field" + (currentPairs.length === 1 ? "" : "s") + (q ? "  ·  " + shown.length + " match" + (shown.length === 1 ? "" : "es") : "");
+      listWrap.innerHTML = "";
+      shown.forEach((p) => {
         const row = document.createElement("div");
-        row.style.cssText = "border:1px solid #e2e8f0;border-radius:7px;padding:6px 9px;margin-bottom:5px;cursor:pointer;";
+        row.style.cssText = "border:1px solid #e2e8f0;border-radius:7px;padding:7px 10px;margin-bottom:5px;cursor:pointer;";
         row.onmouseenter = () => (row.style.background = "#f1f5f9");
         row.onmouseleave = () => (row.style.background = "#fff");
         row.innerHTML =
-          "<div style='font-size:12px;color:#0f172a;'>" + esc(p.sourceLabel || p.sourceApi || "(system)") + " <span style='color:#94a3b8'>&rarr;</span> " + esc(p.targetLabel || p.targetApi) + "</div>" +
-          "<div style='font:11px SF Mono,Consolas,monospace;color:#64748b;margin-top:2px'>" + esc(p.sourceApi || "&mdash;") + " &rarr; " + esc(p.targetApi || "") + "</div>";
-        row.onclick = () => jumpToPair(p.sourceApi, p.targetApi);
+          "<div style='font-size:12.5px;color:#0f172a;font-weight:600;'>" + esc(p.sourceLabel || p.sourceApi || "(system field)") + " <span style='color:#94a3b8;font-weight:400'>&rarr;</span> " + esc(p.targetLabel || p.targetApi) + "</div>" +
+          "<div style='font:11px SF Mono,Consolas,monospace;color:#64748b;margin-top:2px'>" + esc(p.sourceApi || "(system)") + " &rarr; " + esc(p.targetApi || "") + "</div>";
+        row.onclick = () => {
+          const text = (p.sourceApi || "") + " → " + (p.targetApi || "");
+          try { navigator.clipboard.writeText(text); } catch (e) {}
+          const prev = row.style.background; row.style.background = "#dcfce7";
+          setTimeout(() => { row.style.background = prev || "#fff"; }, 500);
+        };
         listWrap.appendChild(row);
       });
+      if (!shown.length) listWrap.innerHTML = "<div style='color:#94a3b8;font-size:12px;padding:6px 2px'>No fields match “" + esc(q) + "”.</div>";
     }
-    sel.onchange = () => renderList(sel.value);
+
+    function selectDmo(dmoApi) {
+      if (!dmoApi) { currentPairs = []; search.style.display = "none"; countLine.textContent = ""; listWrap.innerHTML = ""; return; }
+      currentPairs = (g.get(dmoApi) || []).slice().sort((a, b) =>
+        String(a.targetLabel || a.targetApi || "").toLowerCase().localeCompare(String(b.targetLabel || b.targetApi || "").toLowerCase()));
+      search.style.display = currentPairs.length > 8 ? "block" : "none";
+      search.value = "";
+      paint("");
+    }
+    sel.onchange = () => selectDmo(sel.value);
+    search.oninput = () => paint(search.value);
 
     document.body.appendChild(panel);
     try { makeDraggable(panel, hdr); } catch (e) {}
