@@ -1379,12 +1379,15 @@
   }
 
   // ===== FOCUS DMO =====
-  // Verify ONE DMO's mappings without tracing the wire spaghetti: pick a target DMO,
-  // read its exact source->target field pairs as a clean, searchable list. All pairs
-  // come from buildMappingRows() (the authoritative container.mapping[], same data the
-  // export uses). Read-only; shows a panel only — never touches SF's wires or data.
-  // (We deliberately do NOT dim canvas rows: it can't dim the WIRES — the real noise —
-  // so it didn't declutter, and shared field names like Id__c over-matched across DMOs.)
+  // Verify ONE DMO's mappings without tracing the wire spaghetti. Two parts:
+  //   (1) a panel listing that DMO's exact source->target field pairs (authoritative,
+  //       from buildMappingRows()); and
+  //   (2) a "declutter canvas" action that HIDES every OTHER target DMO list + every
+  //       source row NOT mapped to the chosen DMO (display:none), leaving only that
+  //       DMO's handful of wires — clean to trace.
+  // CAVEAT (surfaced to the user): hiding SF's own rows disturbs SF's zoom/pan math
+  // while active, so this is a temporary "verify snapshot" — a prominent Show All
+  // restores everything, and we auto-restore on panel close/teardown.
   function groupRowsByDmo(rows) {
     const m = new Map();
     for (const r of rows) {
@@ -1395,8 +1398,66 @@
     return m;
   }
 
+  // Normalize a field api name or a row's data-tid to a common key so they match:
+  //   "Address_Contact_Point_Type__c" / "Address Contact Point Type" -> "address contact point type"
+  function normFieldKey(s) { return String(s == null ? "" : s).replace(/__c$/i, "").replace(/[_\s]+/g, " ").trim().toLowerCase(); }
+
+  // Hide everything on the canvas except the chosen DMO + its mapped source rows.
+  // Records each hidden element's prior inline display so restoreCanvas() is exact.
+  var _canvasHidden = [];
+  function restoreCanvas() {
+    for (const pair of _canvasHidden) { try { pair[0].style.setProperty("display", pair[1] || "", ""); } catch (e) {} }
+    _canvasHidden = [];
+  }
+  // Returns the set of normalized source-field keys mapped to >1 DMO ("shared" /
+  // system fields like DataSource, InternalOrganization, key qualifiers). Their wires
+  // dangle to hidden DMOs; hiding these rows removes the stray wires entirely.
+  function sharedSourceKeys(rows) {
+    const byField = new Map(); // normKey -> Set(dmoApi)
+    for (const r of rows) {
+      if (!r.sourceApi || !r.dmo) continue;
+      const k = normFieldKey(r.sourceApi);
+      if (!byField.has(k)) byField.set(k, new Set());
+      byField.get(k).add(r.dmo);
+    }
+    const shared = new Set();
+    for (const [k, set] of byField) if (set.size > 1) shared.add(k);
+    return shared;
+  }
+  // Hide everything except the chosen DMO + its mapped source rows. If hideShared is
+  // true, ALSO hide source rows that map to other DMOs too (removes the stray wires).
+  function hideOtherForDmo(dmoApi, rows, hideShared) {
+    restoreCanvas();
+    if (!dmoApi) return 0;
+    const hide = (el) => { try { const p = el.style.display; el.style.setProperty("display", "none", "important"); _canvasHidden.push([el, p]); } catch (e) {} };
+    // 1. hide OTHER target DMO lists
+    try {
+      for (const listEl of findByTag(TGT_CONTAINER)) {
+        let n = ""; try { n = (listEl.entity && listEl.entity.name) || ""; } catch (e) {}
+        if (n && n !== dmoApi) hide(listEl);
+      }
+    } catch (e) {}
+    // 2. source field keys to KEEP = mapped to this DMO, minus shared ones if requested
+    const shared = hideShared ? sharedSourceKeys(rows) : new Set();
+    const keep = new Set();
+    for (const r of rows) { if (r.dmo === dmoApi && r.sourceApi) { const k = normFieldKey(r.sourceApi); if (!(hideShared && shared.has(k))) keep.add(k); } }
+    // 3. hide source rows whose normalized data-tid isn't in `keep` (skip section headers)
+    const NON_FIELD = /^(Add New Field|Unmapped|Is Mapped|Mapped|Show more|Show less)\b/i;
+    let hid = 0;
+    try {
+      for (const it of findByTag(ITEM)) {
+        if (ancestorOfTag(it, SRC_LIST) == null) continue; // source-side rows only
+        const t = labelOf(it);
+        if (!t || HEADER.test(t) || NON_FIELD.test(t)) continue;
+        if (keep.has(normFieldKey(t))) continue;
+        hide(it); hid++;
+      }
+    } catch (e) {}
+    return hid;
+  }
+
   var focusPanelEl = null;
-  function closeFocusPanel() { if (focusPanelEl) { try { focusPanelEl.remove(); } catch (e) {} focusPanelEl = null; } }
+  function closeFocusPanel() { restoreCanvas(); if (focusPanelEl) { try { focusPanelEl.remove(); } catch (e) {} focusPanelEl = null; } }
 
   function openFocusPanel() {
     closeFocusPanel();
@@ -1444,6 +1505,32 @@
     search.style.cssText = "width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;font:12px -apple-system,sans-serif;display:none;";
     controls.appendChild(search);
 
+    // Declutter-canvas controls: hide other DMOs + unrelated source rows on the canvas.
+    const declutterRow = document.createElement("div");
+    declutterRow.style.cssText = "display:none;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;";
+    const declutterBtn = document.createElement("button");
+    declutterBtn.textContent = "Declutter canvas";
+    declutterBtn.title = "Hide every other DMO and unrelated source field on the canvas, leaving just this DMO's wires to trace.";
+    declutterBtn.style.cssText = "border:none;border-radius:7px;padding:6px 12px;cursor:pointer;font:600 12px -apple-system,sans-serif;color:#fff;background:linear-gradient(135deg,#14b8a6,#0d9488);";
+    const showAllBtn = document.createElement("button");
+    showAllBtn.textContent = "Show all";
+    showAllBtn.title = "Restore every DMO and field on the canvas.";
+    showAllBtn.style.cssText = "border:1px solid #cbd5e1;border-radius:7px;padding:6px 12px;cursor:pointer;font:600 12px -apple-system,sans-serif;color:#334155;background:#fff;display:none;";
+    const sharedLbl = document.createElement("label");
+    sharedLbl.style.cssText = "display:flex;align-items:center;gap:5px;font-size:11px;color:#475569;cursor:pointer;flex-basis:100%;margin-top:2px;";
+    const sharedChk = document.createElement("input"); sharedChk.type = "checkbox"; sharedChk.checked = true;
+    sharedLbl.appendChild(sharedChk);
+    sharedLbl.appendChild(document.createTextNode(" hide shared system/key fields (removes stray wires)"));
+    declutterRow.appendChild(declutterBtn);
+    declutterRow.appendChild(showAllBtn);
+    declutterRow.appendChild(sharedLbl);
+    controls.appendChild(declutterRow);
+
+    const warnLine = document.createElement("div");
+    warnLine.style.cssText = "display:none;font-size:10.5px;color:#b45309;background:#fffbeb;border-radius:6px;padding:5px 8px;margin-top:7px;line-height:1.4;";
+    warnLine.innerHTML = "Canvas rows are hidden to declutter — SF zoom/pan may act oddly while active. Click <b>Show all</b> (or close) to restore.";
+    controls.appendChild(warnLine);
+
     const countLine = document.createElement("div");
     countLine.style.cssText = "font-size:11px;color:#64748b;margin:8px 0 0;";
     controls.appendChild(countLine);
@@ -1483,11 +1570,23 @@
       if (!shown.length) listWrap.innerHTML = "<div style='color:#94a3b8;font-size:12px;padding:6px 2px'>No fields match “" + esc(q) + "”.</div>";
     }
 
+    let decluttered = false;
+    function setDeclutter(on) {
+      decluttered = on;
+      if (on) { hideOtherForDmo(sel.value, rows, sharedChk.checked); declutterBtn.style.display = "none"; showAllBtn.style.display = ""; warnLine.style.display = "block"; }
+      else { restoreCanvas(); declutterBtn.style.display = ""; showAllBtn.style.display = "none"; warnLine.style.display = "none"; }
+    }
+    declutterBtn.onclick = () => setDeclutter(true);
+    showAllBtn.onclick = () => setDeclutter(false);
+    sharedChk.onchange = () => { if (decluttered) hideOtherForDmo(sel.value, rows, sharedChk.checked); };
+
     function selectDmo(dmoApi) {
-      if (!dmoApi) { currentPairs = []; search.style.display = "none"; countLine.textContent = ""; listWrap.innerHTML = ""; return; }
+      setDeclutter(false); // changing DMO restores the canvas first
+      if (!dmoApi) { currentPairs = []; search.style.display = "none"; declutterRow.style.display = "none"; countLine.textContent = ""; listWrap.innerHTML = ""; return; }
       currentPairs = (g.get(dmoApi) || []).slice().sort((a, b) =>
         String(a.targetLabel || a.targetApi || "").toLowerCase().localeCompare(String(b.targetLabel || b.targetApi || "").toLowerCase()));
       search.style.display = currentPairs.length > 8 ? "block" : "none";
+      declutterRow.style.display = "flex";
       search.value = "";
       paint("");
     }
