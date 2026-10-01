@@ -1156,6 +1156,9 @@
         const sourceLabel = safeGet(f, "sourceLabel") || "";
         const targetApi = safeGet(f, "name") || "";
         const s = resolveSource(sourceLabel, dmo, targetApi);
+        // PK: the canvas field's own `isPrimaryKey` flag (confirmed via probe — this is
+        // what SF renders "Primary Key" from; entity.primaryKeys[] is empty on canvas).
+        const isPK = !!safeGet(f, "isPrimaryKey");
         rows.push({
           srcObj: s.srcObj, srcObjLabel: s.srcObjLabel,
           sourceLabel: sourceLabel, sourceApi: s.sourceApi, sourceType: s.sourceType || "",
@@ -1163,7 +1166,7 @@
           targetLabel: safeGet(f, "label") || "",
           targetApi: targetApi,
           targetType: (function () { const t = safeGet(f, "type"); return t == null ? "" : String(t); })(),
-          targetIsPrimaryKey: !!safeGet(f, "primaryKey"), // authoritative PK flag (not guessed)
+          targetIsPrimaryKey: isPK,
         });
       }
     }
