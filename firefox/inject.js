@@ -1101,11 +1101,13 @@
     const labelCounts = new Map();
     const objByLabel = new Map(); // source-object label -> {name,label}
     const srcPkSet = {};          // source field api names that are the DLO's primary key
+    const srcCat = {}; // DLO api name -> category (e.g. "Profile"), confirmed via probe
     for (const listEl of findVisibleByTag(SRC_CONTAINER)) {
       let ent = null; try { ent = listEl.entity; } catch (e) {}
       const dlo = (ent && safeGet(ent, "name")) || "";
       const dloLabel = (ent && safeGet(ent, "label")) || "";
       if (dloLabel) objByLabel.set(dloLabel, { name: dlo, label: dloLabel });
+      if (dlo) { const cat = ent && safeGet(ent, "category"); if (cat) srcCat[String(dlo)] = String(cat); }
       // Source PK: field.isPrimaryKey on the source entity's fields (confirmed via
       // probe — e.g. contact_key__c on the DLO). Keyed by field api name.
       try {
@@ -1172,7 +1174,7 @@
         // what SF renders "Primary Key" from; entity.primaryKeys[] is empty on canvas).
         const isPK = !!safeGet(f, "isPrimaryKey");
         rows.push({
-          srcObj: s.srcObj, srcObjLabel: s.srcObjLabel,
+          srcObj: s.srcObj, srcObjLabel: s.srcObjLabel, srcCategory: (s.srcObj && srcCat[String(s.srcObj)]) || "",
           sourceLabel: sourceLabel, sourceApi: s.sourceApi, sourceType: s.sourceType || "",
           sourceIsPrimaryKey: !!(s.sourceApi && srcPkSet[String(s.sourceApi)]),
           dmo, dmoLabel,
