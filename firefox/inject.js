@@ -5569,12 +5569,12 @@ processJSON();
       if (isSegment && typeof window.__dcToggleSegApi === "function") {
         const apiIconSvg = "<svg width='14' height='14' viewBox='0 0 16 16' fill='white'><path d='M4.5 3L2 8l2.5 5M11.5 3L14 8l-2.5 5' stroke='white' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>";
         const onNow = (typeof window.__dcSegApiIsOn === "function") && window.__dcSegApiIsOn();
-        segApiRow = mkBtn("dc-seg-api-row", "API names", "Toggle API-name hints: hover any attribute/rule to see its API name, click the row to copy it", "linear-gradient(135deg,#6366f1,#4338ca)", apiIconSvg, onNow ? "On — hover a row, click to copy" : "Off — click to enable hover");
+        segApiRow = mkBtn("dc-seg-api-row", "API names", "Toggle API-name hints: hover any attribute/rule to see its API name, then press C to copy (clicks are left alone)", "linear-gradient(135deg,#6366f1,#4338ca)", apiIconSvg, onNow ? "On — hover a row, press C to copy" : "Off — click to enable hover");
         const segSub = segApiRow.querySelector("span:last-child");
         segApiRow.onclick = (e) => {
           e.stopPropagation();
           let on = false; try { on = window.__dcToggleSegApi(); } catch (err) {}
-          if (segSub) segSub.textContent = on ? "On — hover a row, click to copy" : "Off — click to enable hover";
+          if (segSub) segSub.textContent = on ? "On — hover a row, press C to copy" : "Off — click to enable hover";
           // leave the menu open so the user sees the state flip; closes on outside click
         };
       }
