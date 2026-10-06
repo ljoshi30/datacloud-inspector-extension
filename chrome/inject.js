@@ -3945,59 +3945,81 @@ processJSON();
   }
 
   // Create the activation launcher button (extension-only)
+  // Unified Activation launcher — the SAME FAB + popover menu used on every other page
+  // (same inspector icon, same dark menu, same drag), instead of separate floating pills.
+  // Menu rows: "Export Activation" (extension/bridge only) and, dev-only, an "API names"
+  // ON/OFF toggle row. Rebuilt idempotently (bails if the FAB already exists).
   function ensureActivationLauncher() {
-    /* [in-development features removed from public build] */
-    // Extension-only feature (export needs the bridge)
-    if (!extBridgePresent()) return;
-    if (document.getElementById("dc-activation-bar")) return;
+    if (document.getElementById("dc-bar") || document.getElementById("dc-act-bar")) return;
 
     var wrap = document.createElement("div");
-    wrap.id = "dc-activation-bar";
-    // sit the export button ABOVE the API-names toggle so they don't overlap
-    wrap.style.cssText = "position:fixed;bottom:64px;left:20px;z-index:2147483646;";
+    wrap.id = "dc-act-bar";
+    wrap.style.cssText = "position:fixed;bottom:24px;right:24px;z-index:2147483646;display:flex;flex-direction:column;align-items:flex-end;gap:8px;pointer-events:none";
 
-    var btn = document.createElement("button");
-    btn.textContent = "📋 Export Activation";
-    btn.title = "Export this activation's target, attributes and field mappings (with API names) to HTML / Sheets so you can review or share the configuration.";
-    btn.style.cssText = "border:none;border-radius:20px;padding:10px 18px;cursor:pointer;font:600 12px -apple-system,sans-serif;color:#fff;background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 3px 12px rgba(16,185,129,.3);transition:transform .1s,box-shadow .1s;";
-    btn.onmouseenter = function () {
-      btn.style.transform = "scale(1.03)";
-      btn.style.boxShadow = "0 4px 16px rgba(16,185,129,.4)";
-    };
-    btn.onmouseleave = function () {
-      btn.style.transform = "scale(1)";
-      btn.style.boxShadow = "0 3px 12px rgba(16,185,129,.3)";
-    };
+    var menu = document.createElement("div");
+    menu.style.cssText = "position:relative;width:230px;background:#111827;border-radius:16px;box-shadow:0 24px 64px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.08);overflow:hidden;padding:8px;pointer-events:none;transition:opacity .2s cubic-bezier(.34,1.56,.64,1),transform .2s cubic-bezier(.34,1.56,.64,1);opacity:0;transform:translateY(12px) scale(.95);";
+    menu.setAttribute("aria-hidden", "true");
 
-    var note = document.createElement("div");
-    note.style.cssText = "margin-top:8px;font-size:11px;color:#dc2626;background:#fff;border:1px solid #fecaca;border-radius:6px;padding:6px 10px;display:none;max-width:280px;box-shadow:0 2px 8px rgba(0,0,0,.1);";
-
-    btn.onclick = function () {
-      var activationId = getActivationIdFromUrl();
-      if (!activationId) {
-        note.textContent = "Couldn't find the activation ID in the URL.";
-        note.style.display = "block";
-        return;
-      }
-
-      btn.disabled = true;
-      btn.textContent = "Reading…";
-      note.style.display = "none";
-
-      fetchActivationViaBridge(activationId).then(function (data) {
-        btn.disabled = false;
-        btn.textContent = "📋 Export Activation";
-        showActivationModal(data);
-      }).catch(function (err) {
-        btn.disabled = false;
-        btn.textContent = "📋 Export Activation";
-        note.textContent = String(err && err.message || err);
-        note.style.display = "block";
-      });
+    var mkBtn = function (id, label, title, iconGrad, iconSvg, subtitle) {
+      var b = document.createElement("button");
+      b.id = id; b.title = title;
+      b.style.cssText = "display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border-radius:10px;cursor:pointer;border:none;background:#111827;color:#fff;text-align:left;transition:background .12s;";
+      b.onmouseenter = function () { b.style.background = "rgba(255,255,255,.07)"; };
+      b.onmouseleave = function () { b.style.background = "#111827"; };
+      b.innerHTML = "<div style='flex-shrink:0;width:32px;height:32px;border-radius:10px;background:" + iconGrad + ";display:flex;align-items:center;justify-content:center;'>" + iconSvg + "</div>"
+        + "<div style='display:flex;flex-direction:column;gap:1px;'><span style='font:600 13px/1.2 -apple-system,sans-serif;color:#fff;'>" + label + "</span><span style='font:400 11px/1.3 -apple-system,sans-serif;color:#94a3b8;'>" + subtitle + "</span></div>";
+      return b;
     };
 
-    wrap.appendChild(btn);
-    wrap.appendChild(note);
+    // Export Activation — only meaningful with the bridge (extension); hidden otherwise.
+    if (typeof extBridgePresent === "function" && extBridgePresent()) {
+      var exportIconSvg = "<svg width='14' height='14' viewBox='0 0 16 16' fill='white'><path d='M8 1v9M4 6l4 4 4-4'/><rect x='2' y='13' width='12' height='2' rx='1'/></svg>";
+      var exportRow = mkBtn("dc-act-export-row", "Export Activation", "Export this activation's target, attributes and field mappings (with API names) to HTML / Sheets.", "linear-gradient(135deg,#10b981,#059669)", exportIconSvg, "Target, attributes & mappings");
+      var exErr = exportRow.querySelector("span:last-child");
+      exportRow.onclick = function (e) {
+        e.stopPropagation();
+        var activationId = getActivationIdFromUrl();
+        if (!activationId) { if (exErr) exErr.textContent = "Couldn't find the activation ID in the URL."; return; }
+        var lbl = exportRow.querySelector("span:first-child"); if (lbl) lbl.textContent = "Reading…";
+        fetchActivationViaBridge(activationId).then(function (data) {
+          if (lbl) lbl.textContent = "Export Activation"; showActivationModal(data);
+        }).catch(function (err) { if (lbl) lbl.textContent = "Export Activation"; if (exErr) exErr.textContent = String(err && err.message || err); });
+      };
+      menu.appendChild(exportRow);
+    }
+
+    /* [in-development features removed from public build] */
+
+    // Nothing to show (no bridge AND no dev toggle) → don't render an empty FAB.
+    if (!menu.childElementCount) return;
+
+    var separator = document.createElement("div");
+    separator.style.cssText = "height:1px;background:rgba(255,255,255,.08);margin:4px 0;";
+    var dismissRow = document.createElement("button");
+    dismissRow.title = "Remove Data 360 Inspector";
+    dismissRow.innerHTML = "<span style='font:500 12px/1 -apple-system,sans-serif;color:#ef4444;display:flex;align-items:center;gap:6px;padding:2px 0;'><span style='font-size:14px;line-height:1;'>×</span>Remove</span>";
+    dismissRow.style.cssText = "display:flex;align-items:center;width:100%;padding:8px 10px;border-radius:10px;cursor:pointer;border:none;background:#111827;transition:background .12s;";
+    dismissRow.onmouseenter = function () { dismissRow.style.background = "rgba(239,68,68,.08)"; };
+    dismissRow.onmouseleave = function () { dismissRow.style.background = "#111827"; };
+    dismissRow.onclick = function (e) { e.stopPropagation(); wrap.remove(); };
+    menu.appendChild(separator); menu.appendChild(dismissRow);
+
+    var fab = document.createElement("button");
+    fab.id = "dc-act-fab";
+    fab.title = "Data 360 Inspector";
+    fab.innerHTML = "<svg width='22' height='22' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'><circle cx='12' cy='12' r='10' stroke='#fff' stroke-width='1.5'/><circle cx='12' cy='4' r='1.2' fill='#fff'/><circle cx='17.7' cy='6.3' r='1.2' fill='#fff'/><circle cx='20' cy='12' r='1.2' fill='#fff'/><circle cx='17.7' cy='17.7' r='1.2' fill='#fff'/><circle cx='12' cy='20' r='1.2' fill='#fff'/><circle cx='6.3' cy='17.7' r='1.2' fill='#fff'/><circle cx='4' cy='12' r='1.2' fill='#fff'/><circle cx='6.3' cy='6.3' r='1.2' fill='#fff'/><circle cx='12' cy='9.5' r='2.5' fill='#fff'/><path d='M8 16.5c0-2.2 1.8-4 4-4s4 1.8 4 4' stroke='#fff' stroke-width='1.5' stroke-linecap='round'/></svg>";
+    fab.style.cssText = "width:44px;height:44px;border-radius:50%;border:none;cursor:pointer;pointer-events:auto;background:linear-gradient(135deg,#2d2b55 0%,#5b4f9e 100%);box-shadow:0 4px 18px rgba(91,79,158,.5);display:flex;align-items:center;justify-content:center;transition:box-shadow .15s,transform .12s;flex-shrink:0;";
+    fab.onmouseenter = function () { fab.style.boxShadow = "0 6px 24px rgba(91,79,158,.65)"; fab.style.transform = "scale(1.07)"; };
+    fab.onmouseleave = function () { fab.style.boxShadow = "0 4px 18px rgba(91,79,158,.5)"; fab.style.transform = "scale(1)"; };
+
+    var menuOpen = false;
+    var openMenu = function () { menuOpen = true; menu.style.opacity = "1"; menu.style.transform = "translateY(0) scale(1)"; menu.setAttribute("aria-hidden", "false"); menu.style.pointerEvents = "auto"; };
+    var closeMenu = function () { menuOpen = false; menu.style.opacity = "0"; menu.style.transform = "translateY(12px) scale(.95)"; menu.setAttribute("aria-hidden", "true"); menu.style.pointerEvents = "none"; };
+    fab.onclick = function (e) { e.stopPropagation(); menuOpen ? closeMenu() : openMenu(); };
+    document.addEventListener("pointerdown", function (e) { if (menuOpen && !wrap.contains(e.target)) closeMenu(); }, true);
+
+    wrap.appendChild(menu);
+    wrap.appendChild(fab);
     document.body.appendChild(wrap);
   }
 
