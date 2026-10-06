@@ -5560,6 +5560,16 @@ processJSON();
       const separator = document.createElement("div");
       separator.style.cssText = "height:1px;background:rgba(255,255,255,.08);margin:4px 0;";
 
+      // Segment-only "API names" entry — opens the hover/copy panel. Dev-gated at runtime:
+      // the panel fn (window.__dcOpenSegApiPanel) only exists when the dev-only segment
+      // API-name feature loaded, so this row is absent from the public build automatically.
+      let segApiRow = null;
+      if (isSegment && typeof window.__dcOpenSegApiPanel === "function") {
+        const apiIconSvg = "<svg width='14' height='14' viewBox='0 0 16 16' fill='white'><path d='M4.5 3L2 8l2.5 5M11.5 3L14 8l-2.5 5' stroke='white' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>";
+        segApiRow = mkBtn("dc-seg-api-row", "API names", "Show attribute API names (hover rows, or open the searchable list)", "linear-gradient(135deg,#6366f1,#4338ca)", apiIconSvg, "Hover rows or open the list");
+        segApiRow.onclick = (e) => { e.stopPropagation(); try { closeMenu(); } catch (err) {} try { window.__dcOpenSegApiPanel(); } catch (err) {} };
+      }
+
       const dismissRow = document.createElement("button");
       dismissRow.title = "Remove Data 360 Inspector";
       dismissRow.innerHTML = "<span style='font:500 12px/1 -apple-system,sans-serif;color:#ef4444;display:flex;align-items:center;gap:6px;padding:2px 0;'><span style='font-size:14px;line-height:1;'>×</span>Remove</span>";
@@ -5569,6 +5579,7 @@ processJSON();
       dismissRow.onclick = (e) => { e.stopPropagation(); teardown(); };
 
       menu.appendChild(dl);
+      if (segApiRow) menu.appendChild(segApiRow);
       menu.appendChild(separator);
       menu.appendChild(dismissRow);
 
