@@ -3946,13 +3946,15 @@ processJSON();
 
   // Create the activation launcher button (extension-only)
   function ensureActivationLauncher() {
-    // Extension-only feature
+    /* [in-development features removed from public build] */
+    // Extension-only feature (export needs the bridge)
     if (!extBridgePresent()) return;
     if (document.getElementById("dc-activation-bar")) return;
 
     var wrap = document.createElement("div");
     wrap.id = "dc-activation-bar";
-    wrap.style.cssText = "position:fixed;bottom:20px;left:20px;z-index:2147483646;";
+    // sit the export button ABOVE the API-names toggle so they don't overlap
+    wrap.style.cssText = "position:fixed;bottom:64px;left:20px;z-index:2147483646;";
 
     var btn = document.createElement("button");
     btn.textContent = "📋 Export Activation";
