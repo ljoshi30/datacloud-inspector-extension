@@ -5523,6 +5523,8 @@ processJSON();
     watchNavigation();
   }
 
+  /* [in-development features removed from public build] */
+
   // Query Editor RETRY — the Query Editor page (/r/DataQueryWorkspace/<id>/view) is a
   // Lightning SPA: when the tool injects, the URL/route may not be final yet, so the
   // one-shot detection above can miss and no FAB appears. Re-check a few times and
