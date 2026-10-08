@@ -5680,7 +5680,11 @@ processJSON();
     }
     ensureDetailLauncher();
     watchNavigation();
-  } else if (!/displayType=graph|marketSegmentActivation|\/r\/MarketSegmentActivation|segmentWizard/i.test(window.location.href) && !onQueryEditorPage && !onTransformPage && !onDataModelPage && !onActivationPage) {
+  } else if (!/displayType=graph|marketSegmentActivation|\/r\/MarketSegmentActivation|segmentWizard/i.test(window.location.href) && !onQueryEditorPage && !onTransformPage && !onDataModelPage && !onActivationPage
+      // The dev-only "open DMO in new tab" overlay (DMO list view) sets this flag when it
+      // activates — suppress the "not supported" toast there. In the PUBLIC build the flag
+      // is never set, so the toast still shows (that page genuinely isn't supported there).
+      && !window.__dcDmoNewTabActive) {
     // Only show the mapping launcher/toast on pages where no launcher was already created.
     var hasMappingCanvas = findByTag(TAGGING_CMP).length > 0;
     if (hasMappingCanvas) {
