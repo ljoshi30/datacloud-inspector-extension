@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Data 360 Inspector",
-  "version": "1.2.515",
+  "version": "1.2.516",
   "description": "Read-only developer tool for Salesforce Data Cloud / Data 360. Reveals API (developer) names on the DLO→DMO mapping canvas and exports Data Stream / DLO / DMO field lists. Nothing leaves your browser.",
   "icons": {
     "16": "icons/icon16.png",
