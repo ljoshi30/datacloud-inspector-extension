@@ -5698,6 +5698,10 @@ processJSON();
         if ((typeof isDataExplorePage === "function" && isDataExplorePage())) {
           ensureExploreLauncher(); watchNavigation(); return;
         }
+        // dev build: the nav ⧉ "open in new tab" installs on EVERY Data Cloud page (the left
+        // nav is always present), so "This page is not supported" is misleading — suppress it.
+        // In the PUBLIC build this flag is never set (nav code is @strip'd) → toast still shows.
+        if (window.__dcNavNewTabInstalled) return;
         var toast = document.createElement("div");
         toast.style.cssText = "position:fixed;bottom:24px;right:24px;z-index:2147483647;background:#111827;color:#fff;font:500 13px/1.4 -apple-system,sans-serif;padding:14px 20px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.4);max-width:320px;opacity:0;transition:opacity .3s;";
         toast.innerHTML = "<div style='display:flex;align-items:flex-start;gap:10px;'>" +
