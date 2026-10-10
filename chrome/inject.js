@@ -5720,6 +5720,8 @@ processJSON();
     }
   }
 
+  /* [in-development features removed from public build] */
+
   // SAFETY NET: start the SPA navigation watcher unconditionally, regardless of which
   // launcher path ran (or if the FAB was created by a delayed retry/observer). The poll
   // tears the FAB down the instant the URL changes, ending its scope. Idempotent — the
