@@ -38,7 +38,22 @@
     try { _prevUrl = window.__DC_DECOR__.loadUrl || ""; } catch (e) {}
     var _curUrl = ""; try { _curUrl = location.href; } catch (e) {}
     try { window.__DC_DECOR__.teardown(); } catch (e) {}
-    if (_prevUrl === _curUrl) return;   // same page → toggle off
+    // Reset the welcome guard so re-activating (off→on) on the same page confirms again.
+    try { window.__dcWelcomeShownFor = null; } catch (e) {}
+    if (_prevUrl === _curUrl) {
+      // same page → toggle OFF. Show a brief confirmation so it isn't a silent/confusing
+      // "nothing happened" — then stop (re-click again re-activates + re-shows the welcome).
+      try {
+        var _offT = document.createElement("div");
+        _offT.id = "dc-off-toast";
+        _offT.style.cssText = "position:fixed;bottom:24px;right:24px;z-index:2147483647;background:#111827;color:#fff;font:600 13px/1.4 -apple-system,sans-serif;padding:11px 15px;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.4);opacity:0;transition:opacity .25s;display:flex;align-items:center;gap:8px;";
+        _offT.innerHTML = "<span style='color:#f87171;font-size:15px;line-height:1'>&#9711;</span>Data 360 Inspector turned off";
+        document.body.appendChild(_offT);
+        requestAnimationFrame(function () { _offT.style.opacity = "1"; });
+        setTimeout(function () { _offT.style.opacity = "0"; setTimeout(function () { try { _offT.remove(); } catch (e) {} }, 300); }, 2200);
+      } catch (e) {}
+      return;
+    }
     // else: navigated → teardown done, continue to re-initialize for the new page
   }
 
@@ -2763,6 +2778,14 @@
   // Detect if we're on an Activation page
   function isActivationPage() {
     return /marketSegmentActivation/i.test(window.location.href) || /\/r\/MarketSegmentActivation\//i.test(window.location.href);
+  }
+  // The activation WIZARD (builder) — the only place attribute rows render, so the only
+  // place the "API names" hover decorator is meaningful. The record /view detail page
+  // (/r/MarketSegmentActivation/<id>/view) has NO attribute DOM, so API names there would
+  // decorate nothing. (Export Activation still works on /view — it's API-based off the
+  // record id — so the launcher itself is NOT gated on this; only the API-names feature is.)
+  function isActivationWizardPage() {
+    return /marketSegmentActivationWizardLanding|marketSegmentActivationWizard/i.test(window.location.href);
   }
 
   // Get the activation ID from URL (supports both wizard and record view)
