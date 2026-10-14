@@ -82,25 +82,11 @@
   // cross-nav persistence), so we also set __dcOff so they go quiet. One meaning of "off".
   function dcFullOff() { try { window.__dcOff = true; } catch (e) {} try { teardown(); } catch (e) {} }
 
-  // Build a FAB-menu row that toggles ONLY the open-in-new-tab ⧉ (independent of the full
-  // off). Persisted (localStorage) so disabling it on a page that HAS a launcher carries to
-  // nav pages that don't. Styled like the other dark menu rows. Returns the button element.
-  function dcMakeNewTabRow() {
-    var b = document.createElement("button");
-    b.id = "dc-newtab-row";
-    b.style.cssText = "display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border-radius:10px;cursor:pointer;border:none;background:#111827;color:#fff;text-align:left;transition:background .12s;";
-    b.onmouseenter = function () { b.style.background = "rgba(255,255,255,.07)"; };
-    b.onmouseleave = function () { b.style.background = "#111827"; };
-    function render() {
-      var on = dcNewTabEnabled();
-      b.innerHTML = "<div style='flex-shrink:0;width:32px;height:32px;border-radius:10px;background:linear-gradient(135deg,#4338ca,#6d28d9);display:flex;align-items:center;justify-content:center;font-size:15px'>&#10697;</div>"
-        + "<div style='display:flex;flex-direction:column;gap:1px;'><span style='font:600 13px/1.2 -apple-system,sans-serif;color:#fff;'>Open in new tab " + (on ? "· On" : "· Off") + "</span>"
-        + "<span style='font:400 11px/1.3 -apple-system,sans-serif;color:#94a3b8;'>" + (on ? "Hover nav / DMO rows for the ⧉" : "⧉ hidden — click to re-enable") + "</span></div>";
-    }
-    render();
-    b.onclick = function (e) { e.stopPropagation(); try { window.__dcToggleNewTab(); } catch (er) {} render(); };
-    return b;
-  }
+  // NOTE: the ⧉ "open in new tab" feature has NO menu toggle (removed — it was clutter in
+  // every launcher since the ⧉ only ever appears on nav items + Data Model list rows, never
+  // in these menus). The ⧉ is unobtrusive (hover-only) and stays on by default; the FAB's
+  // "Remove" still silences it along with everything else via dcFullOff() → __dcOff. The
+  // dcNewTabEnabled/__dcOff gate below is retained so Remove keeps working.
 
   const API_ATTR = /^[A-Za-z0-9_]+__(c|dll|dlm)$/;      // attribute-name is an API name
   const API_VAL = /^[A-Za-z0-9_]+__(c|dll|dlm)$/;       // a value that is a bare API name
@@ -1695,7 +1681,6 @@
     menu.appendChild(inl);
     /* [in-development features removed from public build] */
     menu.appendChild(exp);
-    /* [in-development features removed from public build] */
     menu.appendChild(separator);
     menu.appendChild(dismissRow);
 
@@ -4071,7 +4056,6 @@ processJSON();
     dismissRow.onmouseenter = function () { dismissRow.style.background = "rgba(239,68,68,.08)"; };
     dismissRow.onmouseleave = function () { dismissRow.style.background = "#111827"; };
     dismissRow.onclick = function (e) { e.stopPropagation(); dcFullOff(); };
-    try { if (typeof dcMakeNewTabRow === "function") menu.appendChild(dcMakeNewTabRow()); } catch (e) {}   // ⧉ On/Off
     menu.appendChild(separator); menu.appendChild(dismissRow);
 
     var fab = document.createElement("button");
@@ -5683,7 +5667,6 @@ processJSON();
 
       menu.appendChild(dl);
       if (segApiRow) menu.appendChild(segApiRow);
-      try { if (typeof dcMakeNewTabRow === "function") menu.appendChild(dcMakeNewTabRow()); } catch (e) {}   // ⧉ On/Off
       menu.appendChild(separator);
       menu.appendChild(dismissRow);
 
