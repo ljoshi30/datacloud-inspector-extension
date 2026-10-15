@@ -70,11 +70,15 @@
   // don't. localStorage so it survives reloads. Default ON. Exposed as window.__dcNewTabEnabled
   // + a toggle so the launcher row and the ⧉ handlers share one source of truth. */
   var DC_NEWTAB_LS = "dc_newtab_enabled_v1";
-  function dcNewTabEnabled() {
-    try { if (window.__dcOff) return false; return localStorage.getItem(DC_NEWTAB_LS) !== "0"; } catch (e) { return !window.__dcOff; }
-  }
-  function dcSetNewTabEnabled(on) { try { localStorage.setItem(DC_NEWTAB_LS, on ? "1" : "0"); } catch (e) {} try { window.__dcNewTabEnabled = !!on; } catch (e) {} }
-  try { window.__dcNewTabEnabled = dcNewTabEnabled(); window.__dcToggleNewTab = function () { var on = !dcNewTabEnabled(); dcSetNewTabEnabled(on); return on; }; } catch (e) {}
+  // The ⧉ "open in new tab" is now hover-only with NO menu toggle (removed as clutter). So it
+  // is simply ON unless the whole tool is turned off (FAB "Remove" → __dcOff). We intentionally
+  // DO NOT read the old localStorage flag anymore: if a user had clicked the long-gone "Off"
+  // toggle, that saved "0" would hide the ⧉ FOREVER with no way to re-enable it (the toggle
+  // that wrote "1" no longer exists) — which is exactly the "⧉ gone everywhere" bug. We also
+  // clear any stale saved value so no past state can keep it suppressed.
+  try { localStorage.removeItem(DC_NEWTAB_LS); } catch (e) {}
+  function dcNewTabEnabled() { return !window.__dcOff; }
+  try { window.__dcNewTabEnabled = dcNewTabEnabled(); } catch (e) {}
 
   // FULL off: a user who clicks "Remove" in the FAB (or re-clicks the bookmarklet) means
   // "turn the whole thing off" — the launcher AND the always-on ⧉ overlays. teardown() alone
