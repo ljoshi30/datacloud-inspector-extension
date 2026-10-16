@@ -80,11 +80,28 @@
   function dcNewTabEnabled() { return !window.__dcOff; }
   try { window.__dcNewTabEnabled = dcNewTabEnabled(); } catch (e) {}
 
-  // FULL off: a user who clicks "Remove" in the FAB (or re-clicks the bookmarklet) means
-  // "turn the whole thing off" — the launcher AND the always-on ⧉ overlays. teardown() alone
-  // only removes the FAB/decorations; the ⧉ listeners survive on document (by design, for
-  // cross-nav persistence), so we also set __dcOff so they go quiet. One meaning of "off".
+  // FULL off: turn the whole thing off — the launcher AND the always-on ⧉ overlays. The
+  // per-launcher "Remove" rows were replaced by a non-destructive menu-close × (users remove the
+  // tool by re-clicking the bookmark, whose guard sets __dcOff directly — see top of file). This
+  // helper is retained as the canonical "one meaning of off" (teardown + __dcOff) for any future
+  // caller; the ⧉ listeners live on document and bail when __dcOff is set.
   function dcFullOff() { try { window.__dcOff = true; } catch (e) {} try { teardown(); } catch (e) {} }
+
+  // Shared top-right "×" that just CLOSES a FAB menu (does NOT uninstall — re-clicking the
+  // bookmark removes the tool). Used by every launcher so the menu has a non-destructive close,
+  // matching the mapping-canvas launcher. Pass the launcher's closeMenu(); the menu must be
+  // position:relative (all our FAB menus are). Returns the button element to append to the menu.
+  function dcMakeMenuCloseX(closeMenu) {
+    var x = document.createElement("button");
+    x.className = "dc-menu-close-x";
+    x.title = "Close this menu (click the bookmark again to remove the tool)";
+    x.textContent = "×";
+    x.style.cssText = "position:absolute;top:6px;right:8px;z-index:2;border:none;background:transparent;color:#94a3b8;font:400 18px/1 -apple-system,sans-serif;cursor:pointer;padding:2px 6px;border-radius:6px;transition:background .12s,color .12s;";
+    x.onmouseenter = function () { x.style.background = "rgba(255,255,255,.08)"; x.style.color = "#fff"; };
+    x.onmouseleave = function () { x.style.background = "transparent"; x.style.color = "#94a3b8"; };
+    x.onclick = function (e) { e.stopPropagation(); try { closeMenu(); } catch (er) {} };
+    return x;
+  }
 
   // NOTE: the ⧉ "open in new tab" feature has NO menu toggle (removed — it was clutter in
   // every launcher since the ⧉ only ever appears on nav items + Data Model list rows, never
@@ -1406,18 +1423,10 @@
     exportEl.id = "dc-export";
     exportEl.style.cssText = "position:fixed;top:5vh;left:50%;transform:translateX(-50%);z-index:2147483647;width:min(1000px,94vw);max-height:88vh;display:flex;flex-direction:column;background:#fff;color:#16325c;border:1px solid #c9cede;border-radius:10px;box-shadow:0 24px 60px rgba(0,0,0,.5);font:13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow:hidden";
 
-    // Close on click OUTSIDE the modal (ignore clicks on the launcher button so
-    // it doesn't immediately reopen/close), and on Escape.
-    if (!onDocDown) {
-      onDocDown = (e) => {
-        if (!exportEl) return;
-        const t = e.target;
-        if (exportEl.contains(t)) return;
-        if (t && t.closest && t.closest("#dc-export-btn")) return;
-        closeExport();
-      };
-      document.addEventListener("pointerdown", onDocDown, true);
-    }
+    // Close ONLY via the × button or Escape — NOT on click-outside. Click-outside was closing
+    // the modal when the user clicked the canvas/menu behind it (reported: export modal closed
+    // together with the menu when clicking anywhere). A modal with its own data should persist
+    // until the user explicitly dismisses it.
     if (!onKey) {
       onKey = (e) => { if (e.key === "Escape") closeExport(); };
       document.addEventListener("keydown", onKey, true);
@@ -1722,14 +1731,8 @@
 
     // Top-right × that just CLOSES the menu (does NOT uninstall — re-clicking the bookmarklet
     // removes the tool entirely, so a destructive "Remove" row here was redundant/confusing).
-    const closeX = document.createElement("button");
-    closeX.title = "Close this menu (click the bookmark again to remove the tool)";
-    closeX.textContent = "×";
-    closeX.style.cssText = "position:absolute;top:6px;right:8px;z-index:2;border:none;background:transparent;color:#94a3b8;font:400 18px/1 -apple-system,sans-serif;cursor:pointer;padding:2px 6px;border-radius:6px;transition:background .12s,color .12s;";
-    closeX.onmouseenter = () => { closeX.style.background = "rgba(255,255,255,.08)"; closeX.style.color = "#fff"; };
-    closeX.onmouseleave = () => { closeX.style.background = "transparent"; closeX.style.color = "#94a3b8"; };
-    // closeMenu is defined further down; call it lazily so load order doesn't matter.
-    closeX.onclick = (e) => { e.stopPropagation(); try { closeMenu(); } catch (er) {} };
+    // Shared helper; closeMenu is defined further down — called lazily on click, so order is fine.
+    const closeX = dcMakeMenuCloseX(function () { closeMenu(); });
 
     tog.onclick = (e) => { e.stopPropagation(); toggle(); };
     inl.onclick = (e) => { e.stopPropagation(); toggleInline(); };
@@ -2155,8 +2158,8 @@
     try { installDetailExportTooltips(detailExportEl); } catch (e) {}
     const onEsc=(e)=>{ if(e.key==="Escape"){closeDetail();document.removeEventListener("keydown",onEsc,true);} };
     document.addEventListener("keydown",onEsc,true);
-    const onOut=(e)=>{ if(detailExportEl&&!detailExportEl.contains(e.target)){closeDetail();document.removeEventListener("pointerdown",onOut,true);} };
-    setTimeout(()=>document.addEventListener("pointerdown",onOut,true),100);
+    // (No click-outside close — the modal closes only via its × button or Escape, so clicking
+    // the page/canvas behind it never dismisses it. Reported: clicking anywhere closed it.)
   }
 
   // ── DLO data readers ─────────────────────────────────────────────────────
@@ -2368,8 +2371,8 @@
     try { installDetailExportTooltips(detailExportEl); } catch (e) {}
     const onEsc=(e)=>{ if(e.key==="Escape"){closeDetail();document.removeEventListener("keydown",onEsc,true);} };
     document.addEventListener("keydown",onEsc,true);
-    const onOut=(e)=>{ if(detailExportEl&&!detailExportEl.contains(e.target)){closeDetail();document.removeEventListener("pointerdown",onOut,true);} };
-    setTimeout(()=>document.addEventListener("pointerdown",onOut,true),100);
+    // (No click-outside close — the modal closes only via its × button or Escape, so clicking
+    // the page/canvas behind it never dismisses it. Reported: clicking anywhere closed it.)
   }
 
   // ── DMO data readers ──────────────────────────────────────────────────────
@@ -2849,8 +2852,7 @@
     try { installDetailExportTooltips(detailExportEl); } catch (e) {}
     const onEsc = (e) => { if (e.key === "Escape") { closeDetail(); document.removeEventListener("keydown", onEsc, true); } };
     document.addEventListener("keydown", onEsc, true);
-    const onOut = (e) => { if (detailExportEl && !detailExportEl.contains(e.target)) { closeDetail(); document.removeEventListener("pointerdown", onOut, true); } };
-    setTimeout(() => document.addEventListener("pointerdown", onOut, true), 100);
+    // (No click-outside close — closes only via its × button or Escape.)
   }
 
   // Inline names start OFF — show the control bar and wait for the user to
@@ -4105,17 +4107,6 @@ processJSON();
     // Nothing to show (no bridge AND no dev toggle) → don't render an empty FAB.
     if (!menu.childElementCount) return;
 
-    var separator = document.createElement("div");
-    separator.style.cssText = "height:1px;background:rgba(255,255,255,.08);margin:4px 0;";
-    var dismissRow = document.createElement("button");
-    dismissRow.title = "Remove Data 360 Inspector";
-    dismissRow.innerHTML = "<span style='font:500 12px/1 -apple-system,sans-serif;color:#ef4444;display:flex;align-items:center;gap:6px;padding:2px 0;'><span style='font-size:14px;line-height:1;'>×</span>Remove</span>";
-    dismissRow.style.cssText = "display:flex;align-items:center;width:100%;padding:8px 10px;border-radius:10px;cursor:pointer;border:none;background:#111827;transition:background .12s;";
-    dismissRow.onmouseenter = function () { dismissRow.style.background = "rgba(239,68,68,.08)"; };
-    dismissRow.onmouseleave = function () { dismissRow.style.background = "#111827"; };
-    dismissRow.onclick = function (e) { e.stopPropagation(); dcFullOff(); };
-    menu.appendChild(separator); menu.appendChild(dismissRow);
-
     var fab = document.createElement("button");
     fab.id = "dc-act-fab";
     fab.title = "Data 360 Inspector";
@@ -4129,6 +4120,7 @@ processJSON();
     var closeMenu = function () { menuOpen = false; menu.style.opacity = "0"; menu.style.transform = "translateY(12px) scale(.95)"; menu.setAttribute("aria-hidden", "true"); menu.style.pointerEvents = "none"; };
     fab.onclick = function (e) { e.stopPropagation(); menuOpen ? closeMenu() : openMenu(); };
     document.addEventListener("pointerdown", function (e) { if (menuOpen && !wrap.contains(e.target)) closeMenu(); }, true);
+    try { menu.appendChild(dcMakeMenuCloseX(closeMenu)); } catch (e) {}   // top-right × (non-destructive close)
 
     wrap.appendChild(menu);
     wrap.appendChild(fab);
@@ -5695,9 +5687,6 @@ processJSON();
       const dl = mkBtn("dc-detail-btn", btnLabel, btnLabel, btnGrad, btnIconSvg, btnSubtitle);
       dl.onclick = (e) => { e.stopPropagation(); if (detailPageType === "DataStream") openDsExport(); else if (detailPageType === "DLO") openDloExport(); else if (detailPageType === "Segment" && typeof openSegmentExport === "function") openSegmentExport(); else openDmoExport(); };
 
-      const separator = document.createElement("div");
-      separator.style.cssText = "height:1px;background:rgba(255,255,255,.08);margin:4px 0;";
-
       // Segment-only "API names" entry — TOGGLES the hover-to-copy overlay (no panel).
       // Dev-gated at runtime: the toggle fn (window.__dcToggleSegApi) only exists when the
       // dev-only segment feature loaded, so this row is absent from the public build.
@@ -5715,18 +5704,8 @@ processJSON();
         };
       }
 
-      const dismissRow = document.createElement("button");
-      dismissRow.title = "Remove Data 360 Inspector";
-      dismissRow.innerHTML = "<span style='font:500 12px/1 -apple-system,sans-serif;color:#ef4444;display:flex;align-items:center;gap:6px;padding:2px 0;'><span style='font-size:14px;line-height:1;'>×</span>Remove</span>";
-      dismissRow.style.cssText = "display:flex;align-items:center;width:100%;padding:8px 10px;border-radius:10px;cursor:pointer;border:none;background:#111827;transition:background .12s;";
-      dismissRow.onmouseenter = () => (dismissRow.style.background = "rgba(239,68,68,.08)");
-      dismissRow.onmouseleave = () => (dismissRow.style.background = "#111827");
-      dismissRow.onclick = (e) => { e.stopPropagation(); dcFullOff(); };
-
       menu.appendChild(dl);
       if (segApiRow) menu.appendChild(segApiRow);
-      menu.appendChild(separator);
-      menu.appendChild(dismissRow);
 
       const fab = document.createElement("button");
       fab.id = "dc-fab";
@@ -5752,6 +5731,7 @@ processJSON();
         menu.style.pointerEvents = "none";
       };
       fab.onclick = (e) => { e.stopPropagation(); menuOpen ? closeMenu() : openMenu(); };
+      try { menu.appendChild(dcMakeMenuCloseX(closeMenu)); } catch (e) {}   // top-right × (non-destructive close)
       document.addEventListener("pointerdown", (e) => {
         if (menuOpen && !wrap.contains(e.target)) closeMenu();
       }, true);
