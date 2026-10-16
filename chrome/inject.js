@@ -525,10 +525,22 @@
         span = document.createElement("span");
         span.className = "dc-api-inline";
         span.addEventListener("mousedown", (e) => e.stopPropagation());
-        span.addEventListener("click", (e) => e.stopPropagation());
+        // Click a pinned API name to COPY it (requested). Copies the CLEAN api (span.dataset.api,
+        // never the " (?)" display marker), flashes "✓ Copied", then restores. stopPropagation so
+        // the click doesn't reach SF's canvas (which would select/drag the field).
+        span.addEventListener("click", (e) => {
+          e.stopPropagation(); e.preventDefault();
+          var clean = span.dataset.api || span.textContent.replace(/\s*\(\?\)\s*$/, "");
+          var restore = span.textContent, rc = span.style.color;
+          function flash() { span.textContent = "✓ Copied"; try { span.style.setProperty("color", "#059669", "important"); } catch (er) {} setTimeout(function () { span.textContent = restore; try { span.style.setProperty("color", rc || "#4a6fa5", "important"); } catch (er) {} }, 900); }
+          try { navigator.clipboard.writeText(clean).then(flash, function () { try { var ta = document.createElement("textarea"); ta.value = clean; ta.style.cssText = "position:fixed;opacity:0;"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); } catch (e2) {} flash(); }); }
+          catch (e3) { flash(); }
+        });
         root.appendChild(span);
       }
+      span.dataset.api = apiName;               // clean api for copy (no "(?)" marker)
       span.textContent = shownName;
+      try { span.style.setProperty("cursor", "pointer", "important"); } catch (e) {}
       const set = (p, v) => { try { span.style.setProperty(p, v, "important"); } catch (e) {} };
       set("position", "absolute"); set("display", "block"); set("line-height", "1");
       set("font-family", "'SF Mono',Menlo,Consolas,monospace"); set("font-size", "9px");
@@ -544,7 +556,7 @@
         const left = Math.max(0, Math.round(lr.left - rr.left));
         set("top", top + "px"); set("left", left + "px");
       } catch (e) { set("top", "22px"); set("left", "14px"); } // measured fallbacks
-      try { span.setAttribute("title", apiName); } catch (e) {}
+      try { span.setAttribute("title", "Click to copy " + apiName); } catch (e) {}
     } catch (e) { return false; }
     return true;
   }
@@ -752,12 +764,23 @@
         const mkSpan = (cls, text, color) => {
           const sp = document.createElement("span");
           sp.className = cls; sp.textContent = text;
+          sp.dataset.api = text;   // clean api for copy
           const s = (p, v) => { try { sp.style.setProperty(p, v, "important"); } catch (e) {} };
           s("display", "block"); s("font-family", "'SF Mono',Menlo,Consolas,monospace");
           s("font-size", "10px"); s("color", color); s("margin-top", "3px");
           s("white-space", "nowrap"); s("overflow", "hidden"); s("text-overflow", "ellipsis");
           s("max-width", "100%"); s("user-select", "text"); s("-webkit-user-select", "text");
-          try { sp.setAttribute("title", text); } catch (e) {}
+          s("cursor", "pointer");
+          try { sp.setAttribute("title", "Click to copy " + text); } catch (e) {}
+          // Click to COPY the pinned API name (requested) — flash ✓ Copied, then restore.
+          sp.addEventListener("mousedown", (e) => e.stopPropagation());
+          sp.addEventListener("click", (e) => {
+            e.stopPropagation(); e.preventDefault();
+            var clean = sp.dataset.api || sp.textContent, restore = sp.textContent;
+            function flash() { sp.textContent = "✓ Copied"; s("color", "#059669"); setTimeout(function () { sp.textContent = restore; s("color", color); }, 900); }
+            try { navigator.clipboard.writeText(clean).then(flash, function () { try { var ta = document.createElement("textarea"); ta.value = clean; ta.style.cssText = "position:fixed;opacity:0;"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); } catch (e2) {} flash(); }); }
+            catch (e3) { flash(); }
+          });
           return sp;
         };
         // source API name below the field name in <th> — ALL rows
@@ -1007,7 +1030,11 @@
       const on = state.on;
       t.dataset.active = on ? "1" : "";
       const lbl = t.querySelector(".dc-lbl");
-      if (lbl) lbl.textContent = on ? "Tooltip: ON" : "API Tooltip";
+      // Show a clear ON state: a green ● + "ON" in the label, and the subtitle confirms it's live
+      // so the user KNOWS the feature is enabled and ready (the requested feedback).
+      if (lbl) lbl.innerHTML = on ? "API Tooltip <span style='color:#34d399;font-size:11px;'>● ON</span>" : "API Tooltip";
+      const sub = t.querySelector(".dc-sub");
+      if (sub) sub.textContent = on ? "Enabled — hover any field to see its API name" : "Hover to see API names";
       t.style.setProperty("background", on ? "#0d6efd" : "#111827", "important");
       t.style.setProperty("color", on ? "#fff" : "#fff", "important");
       t.style.setProperty("box-shadow", on ? "0 2px 10px rgba(13,110,253,.35)" : "none", "important");
@@ -1018,7 +1045,9 @@
       const on = state.inline;
       i.dataset.active = on ? "1" : "";
       const lbl = i.querySelector(".dc-lbl");
-      if (lbl) lbl.textContent = on ? "Unpin names" : "Pin API names";
+      if (lbl) lbl.innerHTML = on ? "Pin API names <span style='color:#34d399;font-size:11px;'>● ON</span>" : "Pin API names";
+      const sub = i.querySelector(".dc-sub");
+      if (sub) sub.textContent = on ? "Pinned — click any name to copy it" : "Pin all on canvas";
       i.style.setProperty("background", on ? "#0d6efd" : "#111827", "important");
       i.style.setProperty("color", on ? "#fff" : "#fff", "important");
       i.style.setProperty("box-shadow", on ? "0 2px 10px rgba(13,110,253,.35)" : "none", "important");
@@ -1043,6 +1072,25 @@
     b.style.setProperty("opacity", "0.75", "important");
   }
 
+  // Brief floating confirmation when a mapping-canvas mode turns ON (requested, so it's
+  // unmistakable the feature is live). Bottom-left, opposite the bottom-right launcher, auto-
+  // dismiss ~2s. Only on ENABLE (turning off is self-evident). Reuses one element.
+  var _dcMapToastEl = null, _dcMapToastT = null;
+  function dcMapToast(msg) {
+    try {
+      if (!_dcMapToastEl) {
+        _dcMapToastEl = document.createElement("div");
+        _dcMapToastEl.id = "dc-map-toast";
+        _dcMapToastEl.style.cssText = "position:fixed;bottom:24px;left:24px;z-index:2147483647;background:#0f172a;color:#fff;font:600 12.5px/1.4 -apple-system,sans-serif;padding:10px 14px;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.4);max-width:320px;opacity:0;transform:translateY(8px);transition:opacity .25s,transform .25s;pointer-events:none;";
+        document.body.appendChild(_dcMapToastEl);
+      }
+      _dcMapToastEl.innerHTML = msg;
+      requestAnimationFrame(function () { _dcMapToastEl.style.opacity = "1"; _dcMapToastEl.style.transform = "translateY(0)"; });
+      if (_dcMapToastT) clearTimeout(_dcMapToastT);
+      _dcMapToastT = setTimeout(function () { if (_dcMapToastEl) { _dcMapToastEl.style.opacity = "0"; _dcMapToastEl.style.transform = "translateY(8px)"; } }, 2000);
+    } catch (e) {}
+  }
+
   // The two modes are MUTUALLY EXCLUSIVE — only one active at a time.
   function toggle() {  // hover mode
     if (_busyToggle) return;                       // ignore rapid re-clicks while working
@@ -1054,6 +1102,7 @@
       afterPaint(function () {
         try { bindHover(); redraw(); observe(); } catch (e) {}
         _busyToggle = false; updateBadge();
+        dcMapToast("✓ <b>API Tooltip on</b> — hover any field to see its API name");
       });
     } else { clearTags(); unobserve(); }
   }
@@ -1069,13 +1118,16 @@
       afterPaint(function () {
         try { redraw(); observe(); } catch (e) {}
         _busyToggle = false; updateBadge();
+        // Briefly confirm how many names were pinned in the SUBTITLE (updateBadge owns the
+        // label now), then let updateBadge's steady-state subtitle take back over.
         const b = document.getElementById("dc-inline-btn");
-        const lbl = b && b.querySelector(".dc-lbl");
-        if (lbl) {
+        const sub = b && b.querySelector(".dc-sub");
+        if (sub) {
           const n = (state.srcDone || 0) + (state.tgtDone || 0);
-          lbl.textContent = n > 0 ? ("Pinned " + n) : "Unpin names";
-          if (n > 0) setTimeout(function () { if (state.inline && lbl) lbl.textContent = "Unpin names"; }, 1400);
+          if (n > 0) { sub.textContent = "Pinned " + n + " — click any name to copy"; setTimeout(function () { if (state.inline) updateBadge(); }, 1600); }
         }
+        var n2 = (state.srcDone || 0) + (state.tgtDone || 0);
+        dcMapToast("✓ <b>Pinned " + (n2 > 0 ? n2 + " " : "") + "API names</b> — click any name to copy it");
       });
     } else { clearInline(); unobserve(); }
   }
@@ -1655,7 +1707,10 @@
       b.onmouseenter = () => { b.style.background = "rgba(255,255,255,.07)"; };
       b.onmouseleave = () => { b.style.background = "#111827"; };
       const iconBox = "<div style='flex-shrink:0;width:32px;height:32px;border-radius:10px;background:" + iconGrad + ";display:flex;align-items:center;justify-content:center;'>" + iconSvg + "</div>";
-      const textCol = "<div style='display:flex;flex-direction:column;gap:1px;'><span style='font:600 13px/1.2 -apple-system,sans-serif;color:#fff;'>" + label + "</span><span style='font:400 11px/1.3 -apple-system,sans-serif;color:#94a3b8;'>" + subtitle + "</span></div>";
+      // The label span carries class dc-lbl AND the subtitle dc-sub so updateBadge() can relabel
+      // them to show the ON / working / pinned state. Without .dc-lbl the relabel silently no-ops
+      // — that was why "enabled" never showed on the mapping-canvas buttons.
+      const textCol = "<div style='display:flex;flex-direction:column;gap:1px;'><span class='dc-lbl' style='font:600 13px/1.2 -apple-system,sans-serif;color:#fff;'>" + label + "</span><span class='dc-sub' style='font:400 11px/1.3 -apple-system,sans-serif;color:#94a3b8;'>" + subtitle + "</span></div>";
       b.innerHTML = iconBox + textCol;
       return b;
     };
@@ -1665,28 +1720,27 @@
     const inl = mkBtn("dc-inline-btn", "Pin API names","Pin API names on canvas",  "linear-gradient(135deg,#ec4899,#db2777)", pinIconSvg,     "Pin all on canvas");
     const exp = mkBtn("dc-export-btn", "Export",       "Export mappings",          "linear-gradient(135deg,#f59e0b,#d97706)", exportIconSvg,  "All fields with types");
 
-    const separator = document.createElement("div");
-    separator.style.cssText = "height:1px;background:rgba(255,255,255,.08);margin:4px 0;";
-
-    const dismissRow = document.createElement("button");
-    dismissRow.title = "Remove Data 360 Inspector";
-    dismissRow.innerHTML = "<span style='font:500 12px/1 -apple-system,sans-serif;color:#ef4444;display:flex;align-items:center;gap:6px;padding:2px 0;'><span style='font-size:14px;line-height:1;'>×</span>Remove</span>";
-    dismissRow.style.cssText = "display:flex;align-items:center;width:100%;padding:8px 10px;border-radius:10px;cursor:pointer;border:none;background:#111827;transition:background .12s;";
-    dismissRow.onmouseenter = () => (dismissRow.style.background = "rgba(239,68,68,.08)");
-    dismissRow.onmouseleave = () => (dismissRow.style.background = "#111827");
-    dismissRow.onclick = (e) => { e.stopPropagation(); dcFullOff(); };
+    // Top-right × that just CLOSES the menu (does NOT uninstall — re-clicking the bookmarklet
+    // removes the tool entirely, so a destructive "Remove" row here was redundant/confusing).
+    const closeX = document.createElement("button");
+    closeX.title = "Close this menu (click the bookmark again to remove the tool)";
+    closeX.textContent = "×";
+    closeX.style.cssText = "position:absolute;top:6px;right:8px;z-index:2;border:none;background:transparent;color:#94a3b8;font:400 18px/1 -apple-system,sans-serif;cursor:pointer;padding:2px 6px;border-radius:6px;transition:background .12s,color .12s;";
+    closeX.onmouseenter = () => { closeX.style.background = "rgba(255,255,255,.08)"; closeX.style.color = "#fff"; };
+    closeX.onmouseleave = () => { closeX.style.background = "transparent"; closeX.style.color = "#94a3b8"; };
+    // closeMenu is defined further down; call it lazily so load order doesn't matter.
+    closeX.onclick = (e) => { e.stopPropagation(); try { closeMenu(); } catch (er) {} };
 
     tog.onclick = (e) => { e.stopPropagation(); toggle(); };
     inl.onclick = (e) => { e.stopPropagation(); toggleInline(); };
     /* [in-development features removed from public build] */
     exp.onclick = (e) => { e.stopPropagation(); openExport(); };
 
+    menu.appendChild(closeX);
     menu.appendChild(tog);
     menu.appendChild(inl);
     /* [in-development features removed from public build] */
     menu.appendChild(exp);
-    menu.appendChild(separator);
-    menu.appendChild(dismissRow);
 
     // --- FAB circle button ---
     const fab = document.createElement("button");
