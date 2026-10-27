@@ -5652,6 +5652,8 @@ processJSON();
 
   /* [in-development features removed from public build] */
 
+  /* [in-development features removed from public build] */
+
   if (detailPageType && detailPageType !== "DataExplore" && detailPageType !== "Transform" && detailPageType !== "QueryEditor" && detailPageType !== "DataModel" && detailPageType !== "Activation" && !/displayType=graph|marketSegmentActivation|\/r\/MarketSegmentActivation/i.test(window.location.href)) {
     function ensureDetailLauncher() {
       if (document.getElementById("dc-bar") || document.getElementById("dc-erd-bar") || /displayType=graph/i.test(window.location.href)) return;
@@ -5706,8 +5708,27 @@ processJSON();
         };
       }
 
+      // DataStream/DLO-only "Show formulas" entry — TOGGLES the hover popover (no panel). Shown
+      // ONLY when the page actually has formula fields (count>0); dev-gated at runtime because the
+      // toggle fn only exists when the dev-only formula module loaded. Export is unaffected.
+      let fmRow = null;
+      if ((detailPageType === "DataStream" || detailPageType === "DLO") &&
+          typeof window.__dcToggleDsFormula === "function" &&
+          typeof window.__dcDsFormulaCount === "function" && window.__dcDsFormulaCount() > 0) {
+        const fxIconSvg = "<svg width='14' height='14' viewBox='0 0 16 16' fill='white'><text x='3' y='12' font-family='Georgia,serif' font-style='italic' font-weight='700' font-size='13'>ƒ</text></svg>";
+        const fxOnNow = (typeof window.__dcDsFormulaIsOn === "function") && window.__dcDsFormulaIsOn();
+        fmRow = mkBtn("dc-ds-formula-row", "Show formulas", "Toggle formula hints: hover a formula field to see its formula and copy it (only formula fields react)", "linear-gradient(135deg,#6366f1,#4338ca)", fxIconSvg, fxOnNow ? "On — hover a formula field" : "Off — click to enable hover");
+        const fxSub = fmRow.querySelector("span:last-child");
+        fmRow.onclick = (e) => {
+          e.stopPropagation();
+          let on = false; try { on = window.__dcToggleDsFormula(); } catch (err) {}
+          if (fxSub) fxSub.textContent = on ? "On — hover a formula field" : "Off — click to enable hover";
+        };
+      }
+
       menu.appendChild(dl);
       if (segApiRow) menu.appendChild(segApiRow);
+      if (fmRow) menu.appendChild(fmRow);
 
       const fab = document.createElement("button");
       fab.id = "dc-fab";
