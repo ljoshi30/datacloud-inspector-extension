@@ -5712,7 +5712,7 @@ processJSON();
       // ONLY when the page actually has formula fields (count>0); dev-gated at runtime because the
       // toggle fn only exists when the dev-only formula module loaded. Export is unaffected.
       let fmRow = null;
-      if ((detailPageType === "DataStream" || detailPageType === "DLO") &&
+      if (detailPageType === "DataStream" &&
           typeof window.__dcToggleDsFormula === "function" &&
           typeof window.__dcDsFormulaCount === "function" && window.__dcDsFormulaCount() > 0) {
         const fxIconSvg = "<svg width='14' height='14' viewBox='0 0 16 16' fill='white'><text x='3' y='12' font-family='Georgia,serif' font-style='italic' font-weight='700' font-size='13'>ƒ</text></svg>";
