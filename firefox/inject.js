@@ -38,16 +38,14 @@
     try { _prevUrl = window.__DC_DECOR__.loadUrl || ""; } catch (e) {}
     var _curUrl = ""; try { _curUrl = location.href; } catch (e) {}
     try { window.__DC_DECOR__.teardown(); } catch (e) {}
-    // Reset the welcome guard so re-activating (off→on) on the same page confirms again.
-    try { window.__dcWelcomeShownFor = null; } catch (e) {}
     if (_prevUrl === _curUrl) {
       // same page → toggle OFF. The ⧉ overlays install their listeners on `document` and
       // deliberately SURVIVE teardown (so they persist across SPA navigation without a
       // re-click). A user toggle-off must still stop them, so set a global OFF flag the ⧉
       // handlers check (they bail + stay hidden). Cleared again on the next activation.
       try { window.__dcOff = true; } catch (e) {}
-      // Show a brief confirmation so it isn't a silent/confusing "nothing happened" — then
-      // stop (re-click again re-activates + re-shows the welcome).
+      // Show a brief one-line confirmation so toggling off isn't a silent/confusing "nothing
+      // happened" — then stop (re-click again re-activates).
       try {
         var _offT = document.createElement("div");
         _offT.id = "dc-off-toast";
@@ -5835,7 +5833,11 @@ processJSON();
     }
   }
 
-  /* [in-development features removed from public build] */
+  // (Removed) The page-activation "welcome" toast — a large black box that appeared bottom-left/
+  // right on every feature page — was removed per user feedback: it's intrusive, too wordy, and
+  // unread. Discoverability now lives entirely on hover/tooltips next to each feature (the FAB
+  // buttons carry titles; the ⧉ open-in-new-tab button carries its own tooltip; API-name/formula
+  // hints appear on hover). No global popup on activation.
 
   // SAFETY NET: start the SPA navigation watcher unconditionally, regardless of which
   // launcher path ran (or if the FAB was created by a delayed retry/observer). The poll
