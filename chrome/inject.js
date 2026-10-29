@@ -2486,47 +2486,54 @@
     const xmlEsc = (s) => String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
     const colLetter = (n) => { let s=""; n++; while(n>0){s=String.fromCharCode(64+(n%26||26))+s;n=Math.floor((n-(n%26?0:26))/26);} return s; };
 
-    // Style IDs: 0=normal, 1=bold, 2=wrap (for meta cell). 3+ are COLOR styles (opt-in via
-    // opts.styleFor) — a dark bold-white header + tinted group bands — so a caller can produce a
-    // segment-style colored sheet. Existing callers never reference 3+, so their output is
-    // unchanged. Fonts: 0 normal, 1 bold, 2 bold-white. Fills: 0 none, 1 gray125, 2 header(dark),
-    // 3 AND band, 4 OR band, 5 AND band(alt), 6 OR band(alt).
+    // Style IDs: 0=normal, 1=bold, 2=wrap. 3+ are COLOR/LAYOUT styles (opt-in via opts.styleFor)
+    // so a caller can build a segment-style sheet with a dark header, tinted group bands, and
+    // colored AND/OR rail cells (meant to be MERGED vertically to look like SF's rails). Existing
+    // callers only ever use 0/1/2, so their output is byte-identical.
+    //   Fonts:  0 normal · 1 bold · 2 bold-white
+    //   Fills:  0 none · 1 gray125 · 2 header(#16325C) · 3 AND band(#E8F4FD) · 4 OR band(#F3EEFF)
+    //           · 5 rail green(#008000) · 6 rail orange(#C55A11) · 7 rail amber(#B45309)
+    //   Styles: 3 header · 4 AND band · 5 OR band · 6 AND group-label(bold,centered)
+    //           · 7 OR group-label · 8 AND rail(white/green,centered) · 9 OR rail(white/orange)
+    //           · 10 unknown rail(white/amber)
     const stylesXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
       "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">" +
       "<fonts count=\"3\"><font><sz val=\"11\"/></font><font><b/><sz val=\"11\"/></font><font><b/><sz val=\"11\"/><color rgb=\"FFFFFFFF\"/></font></fonts>" +
-      "<fills count=\"7\">" +
+      "<fills count=\"8\">" +
         "<fill><patternFill patternType=\"none\"/></fill>" +
         "<fill><patternFill patternType=\"gray125\"/></fill>" +
         "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FF16325C\"/></patternFill></fill>" +   // 2 header dark
         "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFE8F4FD\"/></patternFill></fill>" +   // 3 AND band
         "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFF3EEFF\"/></patternFill></fill>" +   // 4 OR band
-        "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFF0F6FF\"/></patternFill></fill>" +   // 5 AND band alt
-        "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFFAF5FF\"/></patternFill></fill>" +   // 6 OR band alt
+        "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FF008000\"/></patternFill></fill>" +   // 5 rail green (AND)
+        "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFC55A11\"/></patternFill></fill>" +   // 6 rail orange (OR)
+        "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFB45309\"/></patternFill></fill>" +   // 7 rail amber (unknown)
       "</fills>" +
       "<borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders>" +
       "<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>" +
-      "<cellXfs count=\"12\">" +
+      "<cellXfs count=\"11\">" +
         "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>" +           // 0: normal
         "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>" +           // 1: bold
         "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"><alignment wrapText=\"1\"/></xf>" + // 2: wrap
-        "<xf numFmtId=\"0\" fontId=\"2\" fillId=\"2\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\"><alignment vertical=\"center\"/></xf>" + // 3: header bold-white on dark
-        "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"3\" borderId=\"0\" xfId=\"0\" applyFill=\"1\"/>" +   // 4: AND band
-        "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"4\" borderId=\"0\" xfId=\"0\" applyFill=\"1\"/>" +   // 5: OR band
-        "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"5\" borderId=\"0\" xfId=\"0\" applyFill=\"1\"/>" +   // 6: AND band alt
-        "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"6\" borderId=\"0\" xfId=\"0\" applyFill=\"1\"/>" +   // 7: OR band alt
-        "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"3\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\"/>" + // 8: bold label on AND band
-        "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"4\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\"/>" + // 9: bold label on OR band
-        "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"5\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\"/>" + // 10: bold label AND alt
-        "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"6\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\"/>" + // 11: bold label OR alt
+        "<xf numFmtId=\"0\" fontId=\"2\" fillId=\"2\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\" applyAlignment=\"1\"><alignment vertical=\"center\"/></xf>" + // 3: header
+        "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"3\" borderId=\"0\" xfId=\"0\" applyFill=\"1\" applyAlignment=\"1\"><alignment vertical=\"center\"/></xf>" +   // 4: AND band
+        "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"4\" borderId=\"0\" xfId=\"0\" applyFill=\"1\" applyAlignment=\"1\"><alignment vertical=\"center\"/></xf>" +   // 5: OR band
+        "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"3\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\" applyAlignment=\"1\"><alignment horizontal=\"center\" vertical=\"center\"/></xf>" + // 6: AND group label
+        "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"4\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\" applyAlignment=\"1\"><alignment horizontal=\"center\" vertical=\"center\"/></xf>" + // 7: OR group label
+        "<xf numFmtId=\"0\" fontId=\"2\" fillId=\"5\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\" applyAlignment=\"1\"><alignment horizontal=\"center\" vertical=\"center\"/></xf>" + // 8: AND rail
+        "<xf numFmtId=\"0\" fontId=\"2\" fillId=\"6\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\" applyAlignment=\"1\"><alignment horizontal=\"center\" vertical=\"center\"/></xf>" + // 9: OR rail
+        "<xf numFmtId=\"0\" fontId=\"2\" fillId=\"7\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\" applyAlignment=\"1\"><alignment horizontal=\"center\" vertical=\"center\"/></xf>" + // 10: unknown rail
       "</cellXfs>" +
       "</styleSheet>";
 
     const sharedStrings = []; const ssIndex = {};
     const si = (v) => { const s=String(v==null?"":v); if(s in ssIndex) return ssIndex[s]; const i=sharedStrings.length; sharedStrings.push(s); ssIndex[s]=i; return i; };
 
-    const sheetXmls = sheets.map(({name, rows, headerRow}) => {
+    const sheetXmls = sheets.map((sheet) => {
+      const { name, rows, headerRow } = sheet;
       const hRow = (headerRow != null ? headerRow : 1); // which row is bold (1-based)
       const totalRows = rows.length;
+      const styleFor = sheet.styleFor || opts.styleFor;   // per-sheet styleFor wins over global
       const cells = rows.map((row, ri) => {
         const rowNum = ri + 1;
         const isBoldRow = rowNum === hRow;
@@ -2534,10 +2541,10 @@
         return row.map((val, ci) => {
           const ref = colLetter(ci) + rowNum;
           let sAttr = "";
-          // opts.styleFor(rowNum1Based, colIndex0Based) → a style id (3..11) to COLOR a cell.
-          // Takes precedence so a caller can paint a header/band; falls back to bold/wrap/normal.
+          // styleFor(rowNum1Based, colIndex0Based) → a style id (3..10) to COLOR a cell. Takes
+          // precedence so a caller can paint header/band/rail; falls back to bold/wrap/normal.
           let styleId = null;
-          if (typeof opts.styleFor === "function") { try { const s = opts.styleFor(rowNum, ci); if (s != null) styleId = s; } catch (e) {} }
+          if (typeof styleFor === "function") { try { const s = styleFor(rowNum, ci); if (s != null) styleId = s; } catch (e) {} }
           if (styleId != null) sAttr = " s=\"" + styleId + "\"";
           else if (isBoldRow) sAttr = " s=\"1\"";
           else if (isLastRow && ci === 0 && opts.wrapLastRow) sAttr = " s=\"2\"";
@@ -2550,8 +2557,27 @@
           }
           return "<c r=\""+ref+"\""+sAttr+" t=\"s\"><v>"+si(val)+"</v></c>";
         }).join("");
-      }).map((rowCells, ri) => "<row r=\""+(ri+1)+"\">"+rowCells+"</row>").join("");
-      return "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>"+cells+"</sheetData></worksheet>";
+      }).map((rowCells, ri) => {
+        const rh = sheet.rowHeights && sheet.rowHeights[ri + 1];   // optional 1-based row height
+        return "<row r=\""+(ri+1)+"\""+(rh ? " ht=\""+rh+"\" customHeight=\"1\"" : "")+">"+rowCells+"</row>";
+      }).join("");
+      // optional column widths: sheet.cols = [{min,max,width}] or a flat [w,w,…] array
+      let colsXml = "";
+      const colDefs = sheet.cols;
+      if (Array.isArray(colDefs) && colDefs.length) {
+        const parts = colDefs.map((c, i) => {
+          if (c == null) return "";
+          const min = (typeof c === "object" ? c.min : i + 1), max = (typeof c === "object" ? c.max : i + 1), w = (typeof c === "object" ? c.width : c);
+          return "<col min=\""+min+"\" max=\""+max+"\" width=\""+w+"\" customWidth=\"1\"/>";
+        }).join("");
+        colsXml = "<cols>"+parts+"</cols>";
+      }
+      // optional merged cells: sheet.merges = ["A2:A6", "C2:C19", …]
+      let mergeXml = "";
+      if (Array.isArray(sheet.merges) && sheet.merges.length) {
+        mergeXml = "<mergeCells count=\""+sheet.merges.length+"\">"+sheet.merges.map(m=>"<mergeCell ref=\""+m+"\"/>").join("")+"</mergeCells>";
+      }
+      return "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"+colsXml+"<sheetData>"+cells+"</sheetData>"+mergeXml+"</worksheet>";
     });
 
     const ssXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><sst xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" count=\""+sharedStrings.length+"\" uniqueCount=\""+sharedStrings.length+"\">"+
