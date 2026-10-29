@@ -2486,17 +2486,38 @@
     const xmlEsc = (s) => String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
     const colLetter = (n) => { let s=""; n++; while(n>0){s=String.fromCharCode(64+(n%26||26))+s;n=Math.floor((n-(n%26?0:26))/26);} return s; };
 
-    // Style IDs: 0=normal, 1=bold, 2=wrap (for meta cell)
+    // Style IDs: 0=normal, 1=bold, 2=wrap (for meta cell). 3+ are COLOR styles (opt-in via
+    // opts.styleFor) — a dark bold-white header + tinted group bands — so a caller can produce a
+    // segment-style colored sheet. Existing callers never reference 3+, so their output is
+    // unchanged. Fonts: 0 normal, 1 bold, 2 bold-white. Fills: 0 none, 1 gray125, 2 header(dark),
+    // 3 AND band, 4 OR band, 5 AND band(alt), 6 OR band(alt).
     const stylesXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
       "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">" +
-      "<fonts count=\"2\"><font><sz val=\"11\"/></font><font><b/><sz val=\"11\"/></font></fonts>" +
-      "<fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills>" +
+      "<fonts count=\"3\"><font><sz val=\"11\"/></font><font><b/><sz val=\"11\"/></font><font><b/><sz val=\"11\"/><color rgb=\"FFFFFFFF\"/></font></fonts>" +
+      "<fills count=\"7\">" +
+        "<fill><patternFill patternType=\"none\"/></fill>" +
+        "<fill><patternFill patternType=\"gray125\"/></fill>" +
+        "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FF16325C\"/></patternFill></fill>" +   // 2 header dark
+        "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFE8F4FD\"/></patternFill></fill>" +   // 3 AND band
+        "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFF3EEFF\"/></patternFill></fill>" +   // 4 OR band
+        "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFF0F6FF\"/></patternFill></fill>" +   // 5 AND band alt
+        "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFFAF5FF\"/></patternFill></fill>" +   // 6 OR band alt
+      "</fills>" +
       "<borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders>" +
       "<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>" +
-      "<cellXfs count=\"3\">" +
+      "<cellXfs count=\"12\">" +
         "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>" +           // 0: normal
         "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>" +           // 1: bold
         "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"><alignment wrapText=\"1\"/></xf>" + // 2: wrap
+        "<xf numFmtId=\"0\" fontId=\"2\" fillId=\"2\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\"><alignment vertical=\"center\"/></xf>" + // 3: header bold-white on dark
+        "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"3\" borderId=\"0\" xfId=\"0\" applyFill=\"1\"/>" +   // 4: AND band
+        "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"4\" borderId=\"0\" xfId=\"0\" applyFill=\"1\"/>" +   // 5: OR band
+        "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"5\" borderId=\"0\" xfId=\"0\" applyFill=\"1\"/>" +   // 6: AND band alt
+        "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"6\" borderId=\"0\" xfId=\"0\" applyFill=\"1\"/>" +   // 7: OR band alt
+        "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"3\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\"/>" + // 8: bold label on AND band
+        "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"4\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\"/>" + // 9: bold label on OR band
+        "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"5\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\"/>" + // 10: bold label AND alt
+        "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"6\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\"/>" + // 11: bold label OR alt
       "</cellXfs>" +
       "</styleSheet>";
 
@@ -2513,7 +2534,12 @@
         return row.map((val, ci) => {
           const ref = colLetter(ci) + rowNum;
           let sAttr = "";
-          if (isBoldRow) sAttr = " s=\"1\"";
+          // opts.styleFor(rowNum1Based, colIndex0Based) → a style id (3..11) to COLOR a cell.
+          // Takes precedence so a caller can paint a header/band; falls back to bold/wrap/normal.
+          let styleId = null;
+          if (typeof opts.styleFor === "function") { try { const s = opts.styleFor(rowNum, ci); if (s != null) styleId = s; } catch (e) {} }
+          if (styleId != null) sAttr = " s=\"" + styleId + "\"";
+          else if (isBoldRow) sAttr = " s=\"1\"";
           else if (isLastRow && ci === 0 && opts.wrapLastRow) sAttr = " s=\"2\"";
           if (typeof val === "number" && isFinite(val)) return "<c r=\""+ref+"\""+sAttr+" t=\"n\"><v>"+val+"</v></c>";
           // For strings with newlines, use inline string <is> instead of shared string
