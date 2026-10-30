@@ -5973,7 +5973,7 @@ processJSON();
     // measured instead via (a) the install-page Cloudflare analytics and (b) a USER-CLICKED
     // "Report usage" action (a user navigation, which CSP does not block). See dcReportUsage below.
     var PING_ENABLED  = false;     // auto-ping off (CSP-blocked). The manual Report-usage button still works.
-    var PING_VERSION  = "1.2.627"; // replaced per build by build.js (coarse, not identifying)
+    var PING_VERSION  = "1.2.629"; // replaced per build by build.js (coarse, not identifying)
     // Which build is this ping coming from? Public build keeps "public"; the @strip block below
     // overrides it to "dev" ONLY in the full/dev build (strip removes the override for public).
     var PING_BUILD    = "public";
@@ -6072,7 +6072,7 @@ processJSON();
         bar.style.cssText = "position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:2147483647;max-width:480px;background:#111827;color:#e5edff;border:1px solid #334;border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.5);padding:12px 14px;font:12px/1.5 -apple-system,sans-serif;";
         bar.innerHTML = "<div style='display:flex;gap:10px;align-items:flex-start;'>" +
           "<span style='font-size:15px;'>&#9432;</span><div>" +
-          "<b>Data 360 Inspector</b> records an <b>anonymous</b> usage count about once a day (a random id + tool version + page type only — no record, field, personal, or org data) so the team can measure adoption. A brief tab may open and close itself. " +
+          "<b>Data 360 Inspector</b> records an <b>anonymous</b> usage count about once a day (a random id + tool version + page type only — no record, field, personal, or org data) so the team can measure adoption. You may briefly see a small window flicker and close itself. " +
           "<a href='#' id='dc-usage-off' style='color:#5eead4;'>Turn off</a> &middot; " +
           "<a href='#' id='dc-usage-ok' style='color:#94a3b8;'>OK</a></div></div>";
         document.body.appendChild(bar);
@@ -6084,11 +6084,13 @@ processJSON();
     }
 
     // ── USER-CLICKED "Report usage" — the ONLY channel that survives Salesforce CSP ──────────
-    // A silent auto-ping is CSP-blocked (connect/img/iframe all locked). But a USER-INITIATED
-    // navigation is NOT blocked: window.open() to our beacon page loads under OUR origin, records
-    // one anonymous usage, shows a "thanks" page, and auto-closes. Proven to land (iwindowtest).
-    // Honest tradeoff: a tab briefly opens — that's the cost of the only open channel. Respects
-    // opt-out; NOT throttled (it's an explicit user action, so counting each click is fine).
+    // A silent send is CSP-blocked (connect/img/iframe all locked). The only channel is a
+    // USER-GESTURE window.open() to our beacon page (loads under OUR origin, records, self-closes).
+    // UX (user feedback: the full readable tab was annoying): open a TINY OFF-SCREEN POPUP WINDOW
+    // instead of a foreground tab — sized 1×1 and positioned off-screen so at most a brief flicker
+    // shows, and we close it ourselves within ~400ms as a backstop (the beacon page also self-closes).
+    // Some browsers ignore window features and still make a tab; in that case the beacon's own
+    // auto-close keeps it brief. Respects opt-out.
     function reportUsage() {
       if (optedOut()) return false;
       if (!PING_ENDPOINT) return false;
@@ -6101,10 +6103,17 @@ processJSON();
                  "&build=" + encodeURIComponent(PING_BUILD) +
                  "&t=" + todayStamp();
         var base = PING_ENDPOINT.replace(/\/ping$/, "/beacon");
-        var w = window.open(base + "?" + qs, "_blank");       // user-gesture navigation → not CSP-blocked
-        // Only mark "sent today" (for THIS feature) if the tab ACTUALLY opened. If a popup blocker
+        // tiny off-screen popup window (not a readable tab): position far off-screen, 1×1.
+        var feats = "width=1,height=1,left=-10000,top=-10000,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=no";
+        var w = window.open(base + "?" + qs, "dc_usage_beacon", feats);
+        // Only mark "sent today" (for THIS feature) if it ACTUALLY opened. If a popup blocker
         // stopped it (w null), do NOT mark → the next FAB-open retries instead of losing it.
-        if (w) { try { markSent(feature); } catch (e) {} return true; }
+        if (w) {
+          try { w.blur(); window.focus(); } catch (e) {}      // keep focus on the SF page (don't steal it)
+          try { setTimeout(function () { try { w.close(); } catch (e) {} }, 400); } catch (e) {}  // backstop close
+          try { markSent(feature); } catch (e) {}
+          return true;
+        }
         return false;                                         // popup-blocked → will retry
       } catch (e) { return false; }
     }
