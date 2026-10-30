@@ -5708,6 +5708,8 @@ processJSON();
 
   /* [in-development features removed from public build] */
 
+  /* [in-development features removed from public build] */
+
   if (detailPageType && detailPageType !== "DataExplore" && detailPageType !== "Transform" && detailPageType !== "QueryEditor" && detailPageType !== "DataModel" && detailPageType !== "Activation" && !/displayType=graph|marketSegmentActivation|\/r\/MarketSegmentActivation/i.test(window.location.href)) {
     function ensureDetailLauncher() {
       if (document.getElementById("dc-bar") || document.getElementById("dc-erd-bar") || /displayType=graph/i.test(window.location.href)) return;
@@ -5780,9 +5782,29 @@ processJSON();
         };
       }
 
+      // DMO-only "Field origin" entry — TOGGLES the Standard/Custom/System badges (no panel).
+      // Shown ONLY when the page actually has fields carrying an origin (count>0); dev-gated at
+      // runtime because the toggle fn only exists when the dev-only origin module loaded. The
+      // export's "Creation Type" column is unaffected either way.
+      let dmoOriginRow = null;
+      if (detailPageType === "DMO" &&
+          typeof window.__dcToggleDmoOrigin === "function" &&
+          typeof window.__dcDmoOriginCount === "function" && window.__dcDmoOriginCount() > 0) {
+        const tagIconSvg = "<svg width='14' height='14' viewBox='0 0 16 16' fill='white'><path d='M2 2h6l6 6-6 6-6-6V2z' fill='none' stroke='white' stroke-width='1.4' stroke-linejoin='round'/><circle cx='5' cy='5' r='1.1' fill='white'/></svg>";
+        const doOnNow = (typeof window.__dcDmoOriginIsOn === "function") && window.__dcDmoOriginIsOn();
+        dmoOriginRow = mkBtn("dc-dmo-origin-row", "Field origin", "Badge each field as Standard (product-given), Custom (created manually), or System (internal)", "linear-gradient(135deg,#f97316,#c2410c)", tagIconSvg, doOnNow ? "On — Standard / Custom / System" : "Off — show each field's origin");
+        const doSub = dmoOriginRow.querySelector("span:last-child");
+        dmoOriginRow.onclick = (e) => {
+          e.stopPropagation();
+          let on = false; try { on = window.__dcToggleDmoOrigin(); } catch (err) {}
+          if (doSub) doSub.textContent = on ? "On — Standard / Custom / System" : "Off — show each field's origin";
+        };
+      }
+
       menu.appendChild(dl);
       if (segApiRow) menu.appendChild(segApiRow);
       if (fmRow) menu.appendChild(fmRow);
+      if (dmoOriginRow) menu.appendChild(dmoOriginRow);
 
       const fab = document.createElement("button");
       fab.id = "dc-fab";
