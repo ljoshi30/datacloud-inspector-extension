@@ -5919,7 +5919,120 @@ processJSON();
   // buttons carry titles; the ⧉ open-in-new-tab button carries its own tooltip; API-name/formula
   // hints appear on hover). No global popup on activation.
 
-  /* [in-development features removed from public build] */
+  /* ── USAGE PING (LIVE) — measure REAL active users ──────────────────────────────────────────
+   * Cloudflare on the install page only counts first-time VISITORS; it can NEVER see people who
+   * already installed and just use the tool (they never revisit that page). This fires ONE
+   * anonymous ping when the tool actually RUNS on a Data Cloud page, so you can count real usage
+   * (incl. returning users) + which features exist — the actual "impact" number.
+   *
+   * ENABLED 2026-10-30 after: user sign-off + Salesforce-CSP verified on a real DC page (ping
+   * allowed) + endpoint deployed & proven. Ships in BOTH builds; each ping is tagged with its
+   * BUILD ("public" | "dev") so the endpoint stores them in SEPARATE tables → public vs dev usage
+   * can be seen independently (user request).
+   * ANONYMITY (by construction): sends ONLY a random local install id (not the org, not the
+   * hostname, no PII, no page data), the tool version, the page TYPE bucket (e.g. "DMO"/"Segment")
+   * and the build tag — never a record id or URL. Throttled to ONCE PER DAY per browser via
+   * localStorage. Uses sendBeacon/no-cors so it can't read any response. Fully fire-and-forget.
+   * USER CONTROL: a one-time disclosure notice + opt-out (__dcUsageOptOut()); opted-out browsers
+   * never ping. Disclosed on the install page too.
+   */
+  (function dcUsagePingModule() {
+    var PING_ENDPOINT = "https://d360-usage.ljoshi30-d360.workers.dev/ping";  // live receiver (Cloudflare Worker + D1)
+    var PING_ENABLED  = true;      // LIVE (sign-off + CSP verified). Opt-out + throttle + anonymity still apply.
+    var PING_VERSION  = "1.2.615"; // replaced per build by build.js (coarse, not identifying)
+    // Which build is this ping coming from? Public build keeps "public"; the @strip block below
+    // overrides it to "dev" ONLY in the full/dev build (strip removes the override for public).
+    var PING_BUILD    = "public";
+    /* [in-development features removed from public build] */
+    var LS_ID    = "dc_usage_iid";   // random per-browser install id (anonymous)
+    var LS_LAST  = "dc_usage_last";  // last-sent day stamp (throttle)
+    var LS_OPTOUT = "dc_usage_optout"; // GATE 3: user opt-out — "1" = never ping (user choice honored)
+    var LS_NOTICE = "dc_usage_noticed"; // "1" = the one-time disclosure notice has been shown
+
+    // GATE 3 — the user's choice always wins, even when the tool is fully live.
+    function optedOut() { try { return localStorage.getItem(LS_OPTOUT) === "1"; } catch (e) { return false; } }
+    // public controls so a user (or the install page) can opt out / back in and check state.
+    try {
+      window.__dcUsageOptOut = function () { try { localStorage.setItem(LS_OPTOUT, "1"); } catch (e) {} return true; };
+      window.__dcUsageOptIn  = function () { try { localStorage.removeItem(LS_OPTOUT); } catch (e) {} return false; };
+      window.__dcUsageIsOptedOut = function () { return optedOut(); };
+    } catch (e) {}
+
+    // Coarse page-type bucket — NEVER a record id or full URL. Mirrors our page gates.
+    function pingPageType() {
+      try {
+        var h = location.href;
+        if (/\/r\/DataStream\//i.test(h)) return "DataStream";
+        if (/\/r\/DataLakeObjectInstance\//i.test(h)) return "DLO";
+        if (/c__objectApiName=/i.test(h) && /standard-DataModel/i.test(h)) return "DMO";
+        if (/standard-DataModel/i.test(h) && /displayType=graph/i.test(h)) return "DataGraph";
+        if (/\/r\/Segment\//i.test(h) || /segmentWizard/i.test(h)) return "Segment";
+        if (/\/r\/IdentityResolution\//i.test(h)) return "IdentityResolution";
+        if (/\/r\/DataSpace\//i.test(h)) return "DataSpace";
+        if (/standard-DataModel/i.test(h)) return "DataModel";
+        return "other";
+      } catch (e) { return "other"; }
+    }
+    function randId() {
+      try { if (window.crypto && crypto.getRandomValues) { var a = new Uint32Array(4); crypto.getRandomValues(a); return "i" + a[0].toString(36) + a[1].toString(36) + a[2].toString(36) + a[3].toString(36); } } catch (e) {}
+      // NOTE: Math.random fallback only in the live browser — this file never runs Math.random in tests.
+      try { return "i" + String(Date.now()) + "_" + Math.floor(Math.random() * 1e9).toString(36); } catch (e) { return "i_anon"; }
+    }
+    function installId() {
+      try { var v = localStorage.getItem(LS_ID); if (!v) { v = randId(); localStorage.setItem(LS_ID, v); } return v; } catch (e) { return "i_nostore"; }
+    }
+    function todayStamp() { try { return new Date().toISOString().slice(0, 10); } catch (e) { return ""; } }
+    function sentToday() { try { return localStorage.getItem(LS_LAST) === todayStamp(); } catch (e) { return true; } } // on error, assume sent → don't spam
+    function markSent() { try { localStorage.setItem(LS_LAST, todayStamp()); } catch (e) {} }
+
+    // The actual send — guarded; a single missing gate makes it a hard no-op.
+    function sendPing() {
+      if (!PING_ENABLED || !PING_ENDPOINT) return false;   // GATES 1+2: inert by default
+      if (optedOut()) return false;                         // GATE 3: user opted out → never ping
+      if (sentToday()) return false;                        // once/day throttle
+      var payload = { iid: installId(), v: PING_VERSION, page: pingPageType(), day: todayStamp(), build: PING_BUILD };
+      var ok = false;
+      try {
+        var body = JSON.stringify(payload);
+        if (navigator.sendBeacon) { ok = navigator.sendBeacon(PING_ENDPOINT, body); }      // preferred: fire-and-forget, no response readable
+        else { fetch(PING_ENDPOINT, { method: "POST", mode: "no-cors", keepalive: true, body: body }).catch(function () {}); ok = true; } // can't read response (no-cors)
+      } catch (e) { ok = false; }
+      if (ok) markSent();
+      return ok;
+    }
+
+    // ONE-TIME disclosure notice — honest + respectful. Shown only when the ping is actually LIVE
+    // (no point disclosing something that's off), only once (LS_NOTICE), and never if already
+    // opted out. A small dismissible banner with a one-click "Turn off" (opt-out). Zero cost today
+    // because PING_ENABLED is false → this never renders in the shipped build.
+    function showDisclosureOnce() {
+      try {
+        if (!PING_ENABLED || !PING_ENDPOINT) return;        // not live → say nothing
+        if (optedOut()) return;                             // respect an existing opt-out
+        if (localStorage.getItem(LS_NOTICE) === "1") return; // already shown
+        if (!document.body) { return; }
+        var bar = document.createElement("div");
+        bar.id = "dc-usage-notice";
+        bar.style.cssText = "position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:2147483647;max-width:460px;background:#111827;color:#e5edff;border:1px solid #334;border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.5);padding:12px 14px;font:12px/1.5 -apple-system,sans-serif;";
+        bar.innerHTML = "<div style='display:flex;gap:10px;align-items:flex-start;'>" +
+          "<span style='font-size:15px;'>&#9432;</span><div>" +
+          "<b>Data 360 Inspector</b> reports <b>anonymous</b> usage counts (no data, no record/field values, no personal or org info) so the team can measure adoption. " +
+          "<a href='#' id='dc-usage-off' style='color:#5eead4;'>Turn off</a> &middot; " +
+          "<a href='#' id='dc-usage-ok' style='color:#94a3b8;'>Dismiss</a></div></div>";
+        document.body.appendChild(bar);
+        var done = function () { try { localStorage.setItem(LS_NOTICE, "1"); } catch (e) {} try { bar.remove(); } catch (e) {} };
+        var off = bar.querySelector("#dc-usage-off"), okb = bar.querySelector("#dc-usage-ok");
+        if (off) off.onclick = function (e) { e.preventDefault(); try { window.__dcUsageOptOut(); } catch (er) {} done(); };
+        if (okb) okb.onclick = function (e) { e.preventDefault(); done(); };
+      } catch (e) {}
+    }
+
+    // expose for a future controlled test/flip; calling it today is a no-op (gates off).
+    try { window.__dcUsagePing = function () { return sendPing(); }; } catch (e) {}
+    // On load: show the one-time notice (only if live), then attempt the ping (inert until gates clear).
+    try { showDisclosureOnce(); } catch (e) {}
+    try { sendPing(); } catch (e) {}
+  })();
 
   // SAFETY NET: start the SPA navigation watcher unconditionally, regardless of which
   // launcher path ran (or if the FAB was created by a delayed retry/observer). The poll
