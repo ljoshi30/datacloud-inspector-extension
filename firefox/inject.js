@@ -5962,7 +5962,7 @@ processJSON();
     // measured instead via (a) the install-page Cloudflare analytics and (b) a USER-CLICKED
     // "Report usage" action (a user navigation, which CSP does not block). See dcReportUsage below.
     var PING_ENABLED  = false;     // auto-ping off (CSP-blocked). The manual Report-usage button still works.
-    var PING_VERSION  = "1.2.619"; // replaced per build by build.js (coarse, not identifying)
+    var PING_VERSION  = "1.2.621"; // replaced per build by build.js (coarse, not identifying)
     // Which build is this ping coming from? Public build keeps "public"; the @strip block below
     // overrides it to "dev" ONLY in the full/dev build (strip removes the override for public).
     var PING_BUILD    = "public";
@@ -6068,8 +6068,10 @@ processJSON();
                  "&t=" + todayStamp();
         var base = PING_ENDPOINT.replace(/\/ping$/, "/beacon");
         var w = window.open(base + "?" + qs, "_blank");       // user-gesture navigation → not CSP-blocked
-        try { markSent(); } catch (e) {}
-        return !!w;                                           // false if a popup blocker stopped it
+        // Only mark "sent today" if the tab ACTUALLY opened. If a popup blocker stopped it (w is
+        // null), do NOT mark sent → the next FAB-open retries instead of silently losing the day.
+        if (w) { try { markSent(); } catch (e) {} return true; }
+        return false;                                         // popup-blocked → will retry
       } catch (e) { return false; }
     }
 
