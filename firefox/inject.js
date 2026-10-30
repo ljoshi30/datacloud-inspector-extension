@@ -5962,7 +5962,7 @@ processJSON();
     // measured instead via (a) the install-page Cloudflare analytics and (b) a USER-CLICKED
     // "Report usage" action (a user navigation, which CSP does not block). See dcReportUsage below.
     var PING_ENABLED  = false;     // auto-ping off (CSP-blocked). The manual Report-usage button still works.
-    var PING_VERSION  = "1.2.621"; // replaced per build by build.js (coarse, not identifying)
+    var PING_VERSION  = "1.2.623"; // replaced per build by build.js (coarse, not identifying)
     // Which build is this ping coming from? Public build keeps "public"; the @strip block below
     // overrides it to "dev" ONLY in the full/dev build (strip removes the override for public).
     var PING_BUILD    = "public";
@@ -5981,18 +5981,34 @@ processJSON();
       window.__dcUsageIsOptedOut = function () { return optedOut(); };
     } catch (e) {}
 
-    // Coarse page-type bucket — NEVER a record id or full URL. Mirrors our page gates.
+    // Coarse feature/page bucket — NEVER a record id or full URL. Covers EVERY surface the tool
+    // supports so the ping always reports which feature was used (Query Editor, Activation, Mapping
+    // Canvas, Transform, ERD, Data Explorer, …). Reuses the tool's OWN page detectors (same closure,
+    // authoritative — the same logic that decides which FAB to show) with URL fallbacks. Most
+    // specific first. A helper call is wrapped in try/typeof so a missing fn can never throw.
+    function _is(fn) { try { return typeof fn === "function" && fn(); } catch (e) { return false; } }
     function pingPageType() {
       try {
         var h = location.href;
+        // detail record pages (specific record routes)
         if (/\/r\/DataStream\//i.test(h)) return "DataStream";
         if (/\/r\/DataLakeObjectInstance\//i.test(h)) return "DLO";
-        if (/c__objectApiName=/i.test(h) && /standard-DataModel/i.test(h)) return "DMO";
-        if (/standard-DataModel/i.test(h) && /displayType=graph/i.test(h)) return "DataGraph";
-        if (/\/r\/Segment\//i.test(h) || /segmentWizard/i.test(h)) return "Segment";
         if (/\/r\/IdentityResolution\//i.test(h)) return "IdentityResolution";
         if (/\/r\/DataSpace\//i.test(h)) return "DataSpace";
+        // workspaces/wizards — prefer the tool's own authoritative detectors
+        if (_is(typeof isQueryEditorPage !== "undefined" && isQueryEditorPage)) return "QueryEditor";
+        if (_is(typeof isTransformPage !== "undefined" && isTransformPage)) return "DataTransform";
+        if (_is(typeof isActivationPage !== "undefined" && isActivationPage)) return "Activation";
+        if (_is(typeof isDataExplorePage !== "undefined" && isDataExplorePage)) return "DataExplorer";
+        if (/\/r\/Segment\//i.test(h) || /segmentWizard/i.test(h)) return "Segment";
+        // Data Model surfaces
+        if (/standard-DataModel/i.test(h) && /displayType=graph|c__displayType=graph/i.test(h)) return "DataGraph";
+        if (_is(typeof isDataModelPage !== "undefined" && isDataModelPage)) return "DataModelERD";
+        if (/c__objectApiName=/i.test(h) && /standard-DataModel/i.test(h)) return "DMO";
         if (/standard-DataModel/i.test(h)) return "DataModel";
+        // MAPPING CANVAS — detected by its DOM component (no distinctive URL). Check last so URL
+        // routes win; findByTag is in scope (shared helper). Visible tagging container = canvas.
+        try { if (typeof findByTag === "function" && findByTag(TAGGING_CMP).length) return "MappingCanvas"; } catch (e) {}
         return "other";
       } catch (e) { return "other"; }
     }
@@ -6005,22 +6021,28 @@ processJSON();
       try { var v = localStorage.getItem(LS_ID); if (!v) { v = randId(); localStorage.setItem(LS_ID, v); } return v; } catch (e) { return "i_nostore"; }
     }
     function todayStamp() { try { return new Date().toISOString().slice(0, 10); } catch (e) { return ""; } }
-    function sentToday() { try { return localStorage.getItem(LS_LAST) === todayStamp(); } catch (e) { return true; } } // on error, assume sent → don't spam
-    function markSent() { try { localStorage.setItem(LS_LAST, todayStamp()); } catch (e) {} }
+    // PER-FEATURE, per-day throttle: one ping per (feature, day) per browser. So a user who opens
+    // the DMO FAB and the Segment FAB the same day sends TWO pings (one per feature), but reopening
+    // the SAME feature's FAB all day sends only one. Key is namespaced by feature + day.
+    function throttleKey(feature) { return LS_LAST + "::" + (feature || "other") + "::" + todayStamp(); }
+    function sentToday(feature) { try { return localStorage.getItem(throttleKey(feature)) === "1"; } catch (e) { return true; } } // on error, assume sent → don't spam
+    function markSent(feature) { try { localStorage.setItem(throttleKey(feature), "1"); } catch (e) {} }
 
-    // The actual send — guarded; a single missing gate makes it a hard no-op.
+    // The actual send — guarded; a single missing gate makes it a hard no-op. (Legacy sendBeacon
+    // path — CSP-blocked in practice; kept but PING_ENABLED is false. Real capture is reportUsage.)
     function sendPing() {
       if (!PING_ENABLED || !PING_ENDPOINT) return false;   // GATES 1+2: inert by default
       if (optedOut()) return false;                         // GATE 3: user opted out → never ping
-      if (sentToday()) return false;                        // once/day throttle
-      var payload = { iid: installId(), v: PING_VERSION, page: pingPageType(), day: todayStamp(), build: PING_BUILD };
+      var feature = pingPageType();
+      if (sentToday(feature)) return false;                 // per-feature/day throttle
+      var payload = { iid: installId(), v: PING_VERSION, page: feature, day: todayStamp(), build: PING_BUILD };
       var ok = false;
       try {
         var body = JSON.stringify(payload);
         if (navigator.sendBeacon) { ok = navigator.sendBeacon(PING_ENDPOINT, body); }      // preferred: fire-and-forget, no response readable
         else { fetch(PING_ENDPOINT, { method: "POST", mode: "no-cors", keepalive: true, body: body }).catch(function () {}); ok = true; } // can't read response (no-cors)
       } catch (e) { ok = false; }
-      if (ok) markSent();
+      if (ok) markSent(feature);
       return ok;
     }
 
@@ -6060,17 +6082,18 @@ processJSON();
       if (optedOut()) return false;
       if (!PING_ENDPOINT) return false;
       try {
+        var feature = pingPageType();
         var qs = "iid=" + encodeURIComponent(installId()) +
                  "&v=" + encodeURIComponent(PING_VERSION) +
-                 "&page=" + encodeURIComponent(pingPageType()) +
+                 "&page=" + encodeURIComponent(feature) +
                  "&day=" + encodeURIComponent(todayStamp()) +
                  "&build=" + encodeURIComponent(PING_BUILD) +
                  "&t=" + todayStamp();
         var base = PING_ENDPOINT.replace(/\/ping$/, "/beacon");
         var w = window.open(base + "?" + qs, "_blank");       // user-gesture navigation → not CSP-blocked
-        // Only mark "sent today" if the tab ACTUALLY opened. If a popup blocker stopped it (w is
-        // null), do NOT mark sent → the next FAB-open retries instead of silently losing the day.
-        if (w) { try { markSent(); } catch (e) {} return true; }
+        // Only mark "sent today" (for THIS feature) if the tab ACTUALLY opened. If a popup blocker
+        // stopped it (w null), do NOT mark → the next FAB-open retries instead of losing it.
+        if (w) { try { markSent(feature); } catch (e) {} return true; }
         return false;                                         // popup-blocked → will retry
       } catch (e) { return false; }
     }
@@ -6081,9 +6104,9 @@ processJSON();
     // natural trigger. Respects opt-out + the once/day throttle. The brief tab is the known cost.
     function maybeReportOnFabOpen() {
       try {
-        if (optedOut()) return false;         // user choice wins
-        if (sentToday()) return false;        // already captured today → no tab
-        return reportUsage();                 // records + marks sent (opens the quick tab)
+        if (optedOut()) return false;              // user choice wins
+        if (sentToday(pingPageType())) return false; // THIS feature already captured today → no tab
+        return reportUsage();                      // records + marks sent for this feature (opens the quick tab)
       } catch (e) { return false; }
     }
 
