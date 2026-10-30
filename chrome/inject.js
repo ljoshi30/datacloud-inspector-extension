@@ -5973,7 +5973,7 @@ processJSON();
     // measured instead via (a) the install-page Cloudflare analytics and (b) a USER-CLICKED
     // "Report usage" action (a user navigation, which CSP does not block). See dcReportUsage below.
     var PING_ENABLED  = false;     // auto-ping off (CSP-blocked). The manual Report-usage button still works.
-    var PING_VERSION  = "1.2.629"; // replaced per build by build.js (coarse, not identifying)
+    var PING_VERSION  = "1.2.631"; // replaced per build by build.js (coarse, not identifying)
     // Which build is this ping coming from? Public build keeps "public"; the @strip block below
     // overrides it to "dev" ONLY in the full/dev build (strip removes the override for public).
     var PING_BUILD    = "public";
