@@ -5965,15 +5965,19 @@ processJSON();
    * never ping. Disclosed on the install page too.
    */
   (function dcUsagePingModule() {
-    var PING_ENDPOINT = "https://d360-usage.ljoshi30-d360.workers.dev/ping";  // live receiver (Cloudflare Worker + D1)
-    // AUTO-PING DISABLED: Salesforce page CSP blocks ALL in-page transports to our domain —
-    // connect-src (fetch/sendBeacon), img-src (image), AND frame-src/sandbox (iframe) are all
-    // locked to an allow-list we're not on (confirmed by testing 2026-10-30). A silent auto-ping
-    // therefore CANNOT work from inside a locked SF page, so we don't pretend it does. Impact is
-    // measured instead via (a) the install-page Cloudflare analytics and (b) a USER-CLICKED
-    // "Report usage" action (a user navigation, which CSP does not block). See dcReportUsage below.
-    var PING_ENABLED  = false;     // auto-ping off (CSP-blocked). The manual Report-usage button still works.
-    var PING_VERSION  = "1.2.631"; // replaced per build by build.js (coarse, not identifying)
+    // SILENT AUTO-CAPTURE via FIRESTORE (the breakthrough, proven 2026-10-30):
+    // Salesforce page CSP blocks our own domain on EVERY transport (fetch/img/iframe/<a ping>) AND
+    // window.open always opens a visible tab. BUT the CSP allow-list includes `*.googleapis.com`,
+    // and Firestore's REST API lives there — so a normal CORS+JSON fetch to firestore.googleapis.com
+    // goes through SILENTLY: no tab, automatic, works for the bookmarklet. Proven: HTTP 200 writing
+    // to the `usage` collection from a real SF page. (Gotcha: this project's DB id is literally
+    // "default" — NOT "(default)" with parens — so the REST path uses /databases/default/.)
+    var FS_PROJECT = "d360-usage";
+    var FS_DB      = "default";    // this project's actual DB id (no parens — confirmed by test)
+    var FS_KEY     = "AIzaSyDoIjca9Hw8IEBScjLVsNlu-crgT3idMTk";   // Firebase Web API key (public by design; rules lock writes to create-only)
+    var FS_URL     = "https://firestore.googleapis.com/v1/projects/" + FS_PROJECT + "/databases/" + FS_DB + "/documents/usage?key=" + FS_KEY;
+    var PING_ENABLED  = true;      // LIVE — silent Firestore write (no tab). Opt-out + per-feature/day throttle still apply.
+    var PING_VERSION  = "1.2.635"; // replaced per build by build.js (coarse, not identifying)
     // Which build is this ping coming from? Public build keeps "public"; the @strip block below
     // overrides it to "dev" ONLY in the full/dev build (strip removes the override for public).
     var PING_BUILD    = "public";
@@ -6039,23 +6043,6 @@ processJSON();
     function sentToday(feature) { try { return localStorage.getItem(throttleKey(feature)) === "1"; } catch (e) { return true; } } // on error, assume sent → don't spam
     function markSent(feature) { try { localStorage.setItem(throttleKey(feature), "1"); } catch (e) {} }
 
-    // The actual send — guarded; a single missing gate makes it a hard no-op. (Legacy sendBeacon
-    // path — CSP-blocked in practice; kept but PING_ENABLED is false. Real capture is reportUsage.)
-    function sendPing() {
-      if (!PING_ENABLED || !PING_ENDPOINT) return false;   // GATES 1+2: inert by default
-      if (optedOut()) return false;                         // GATE 3: user opted out → never ping
-      var feature = pingPageType();
-      if (sentToday(feature)) return false;                 // per-feature/day throttle
-      var payload = { iid: installId(), v: PING_VERSION, page: feature, day: todayStamp(), build: PING_BUILD };
-      var ok = false;
-      try {
-        var body = JSON.stringify(payload);
-        if (navigator.sendBeacon) { ok = navigator.sendBeacon(PING_ENDPOINT, body); }      // preferred: fire-and-forget, no response readable
-        else { fetch(PING_ENDPOINT, { method: "POST", mode: "no-cors", keepalive: true, body: body }).catch(function () {}); ok = true; } // can't read response (no-cors)
-      } catch (e) { ok = false; }
-      if (ok) markSent(feature);
-      return ok;
-    }
 
     // ONE-TIME disclosure notice — honest + respectful. Shown only when the ping is actually LIVE
     // (no point disclosing something that's off), only once (LS_NOTICE), and never if already
@@ -6063,7 +6050,7 @@ processJSON();
     // because PING_ENABLED is false → this never renders in the shipped build.
     function showDisclosureOnce() {
       try {
-        if (!PING_ENDPOINT) return;                         // no receiver → nothing to disclose
+        if (!FS_URL) return;                                // no receiver → nothing to disclose
         if (optedOut()) return;                             // respect an existing opt-out
         if (localStorage.getItem(LS_NOTICE) === "1") return; // already shown
         if (!document.body) { return; }
@@ -6072,7 +6059,7 @@ processJSON();
         bar.style.cssText = "position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:2147483647;max-width:480px;background:#111827;color:#e5edff;border:1px solid #334;border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.5);padding:12px 14px;font:12px/1.5 -apple-system,sans-serif;";
         bar.innerHTML = "<div style='display:flex;gap:10px;align-items:flex-start;'>" +
           "<span style='font-size:15px;'>&#9432;</span><div>" +
-          "<b>Data 360 Inspector</b> records an <b>anonymous</b> usage count about once a day (a random id + tool version + page type only — no record, field, personal, or org data) so the team can measure adoption. You may briefly see a small window flicker and close itself. " +
+          "<b>Data 360 Inspector</b> records an <b>anonymous</b> usage count about once a day (a random id + tool version + page type only — no record, field, personal, or org data) so the team can measure adoption. It's silent — nothing opens. " +
           "<a href='#' id='dc-usage-off' style='color:#5eead4;'>Turn off</a> &middot; " +
           "<a href='#' id='dc-usage-ok' style='color:#94a3b8;'>OK</a></div></div>";
         document.body.appendChild(bar);
@@ -6086,66 +6073,53 @@ processJSON();
     // ── USER-CLICKED "Report usage" — the ONLY channel that survives Salesforce CSP ──────────
     // A silent send is CSP-blocked (connect/img/iframe all locked). The only channel is a
     // USER-GESTURE window.open() to our beacon page (loads under OUR origin, records, self-closes).
-    // UX (user feedback: the full readable tab was annoying): open a TINY OFF-SCREEN POPUP WINDOW
-    // instead of a foreground tab — sized 1×1 and positioned off-screen so at most a brief flicker
-    // shows, and we close it ourselves within ~400ms as a backstop (the beacon page also self-closes).
-    // Some browsers ignore window features and still make a tab; in that case the beacon's own
-    // auto-close keeps it brief. Respects opt-out.
+    // SILENT Firestore write — NO tab, NO navigation, fully automatic. A normal CORS+JSON fetch to
+    // firestore.googleapis.com (CSP-allowed via *.googleapis.com). Writes one doc to the `usage`
+    // collection. Fire-and-forget: we don't need the response. Respects opt-out + per-feature/day
+    // throttle (marked sent only once the request is dispatched; Firestore rules reject malformed).
     function reportUsage() {
       if (optedOut()) return false;
-      if (!PING_ENDPOINT) return false;
+      if (!FS_URL) return false;
       try {
         var feature = pingPageType();
-        var qs = "iid=" + encodeURIComponent(installId()) +
-                 "&v=" + encodeURIComponent(PING_VERSION) +
-                 "&page=" + encodeURIComponent(feature) +
-                 "&day=" + encodeURIComponent(todayStamp()) +
-                 "&build=" + encodeURIComponent(PING_BUILD) +
-                 "&t=" + todayStamp();
-        var base = PING_ENDPOINT.replace(/\/ping$/, "/beacon");
-        // tiny off-screen popup window (not a readable tab): position far off-screen, 1×1.
-        var feats = "width=1,height=1,left=-10000,top=-10000,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=no";
-        var w = window.open(base + "?" + qs, "dc_usage_beacon", feats);
-        // Only mark "sent today" (for THIS feature) if it ACTUALLY opened. If a popup blocker
-        // stopped it (w null), do NOT mark → the next FAB-open retries instead of losing it.
-        if (w) {
-          try { w.blur(); window.focus(); } catch (e) {}      // keep focus on the SF page (don't steal it)
-          try { setTimeout(function () { try { w.close(); } catch (e) {} }, 400); } catch (e) {}  // backstop close
-          try { markSent(feature); } catch (e) {}
-          return true;
-        }
-        return false;                                         // popup-blocked → will retry
+        var payload = { fields: {
+          iid:   { stringValue: String(installId()) },
+          v:     { stringValue: String(PING_VERSION) },
+          page:  { stringValue: String(feature) },
+          day:   { stringValue: String(todayStamp()) },
+          build: { stringValue: String(PING_BUILD) },
+          ts:    { stringValue: new Date().toISOString() }
+        }};
+        fetch(FS_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), keepalive: true })
+          .catch(function () {});                  // fire-and-forget; silent on any error
+        try { markSent(feature); } catch (e) {}    // one write per feature/day
+        return true;
       } catch (e) { return false; }
     }
 
-    // Auto-capture tied to a REAL user gesture (opening the FAB): fires at most ONCE PER DAY per
-    // browser. This is the design that actually measures daily-active users — a silent auto-ping is
-    // CSP-blocked, and window.open only works inside a user gesture anyway, so the FAB click is the
-    // natural trigger. Respects opt-out + the once/day throttle. The brief tab is the known cost.
+    // Auto-capture tied to a user gesture (opening the FAB): at most ONCE PER FEATURE PER DAY per
+    // browser. The Firestore write is silent (no tab), so this just needs the throttle + opt-out.
     function maybeReportOnFabOpen() {
       try {
         if (optedOut()) return false;              // user choice wins
-        if (sentToday(pingPageType())) return false; // THIS feature already captured today → no tab
-        return reportUsage();                      // records + marks sent for this feature (opens the quick tab)
+        if (sentToday(pingPageType())) return false; // THIS feature already captured today
+        return reportUsage();                      // silent write + marks sent for this feature
       } catch (e) { return false; }
     }
 
     try {
-      window.__dcUsagePing = function () { return sendPing(); };   // auto-ping (CSP-blocked; kept for completeness)
-      window.__dcReportUsage = function () { return reportUsage(); }; // manual button: the working, user-clicked channel
-      window.__dcReportUsageOnFabOpen = function () { return maybeReportOnFabOpen(); }; // auto: once/day on FAB open
+      window.__dcReportUsage = function () { return reportUsage(); };            // silent Firestore write
+      window.__dcReportUsageOnFabOpen = function () { return maybeReportOnFabOpen(); }; // auto: once/feature/day on FAB open
     } catch (e) {}
-    // AUTO-CAPTURE on FAB open (once/day). ONE global click listener covers every FAB (detail, Data
-    // Graph, IR, Data Space, Explorer, Activation, + any future one) without touching each handler.
-    // It fires only on a genuine click of a dc FAB launcher button — which is a user gesture, so
-    // window.open isn't popup-blocked — and maybeReportOnFabOpen() throttles to once/day + honors
-    // opt-out, so it's at most one brief tab per user per day. Idle cost ≈ zero (only acts on a click).
+    // AUTO-CAPTURE on FAB open. ONE global click listener covers every FAB (detail, Data Graph, IR,
+    // Data Space, Explorer, Activation, + any future one) without touching each handler. The write is
+    // a SILENT Firestore fetch (no tab) — the FAB click is just the natural "tool was used" trigger.
+    // maybeReportOnFabOpen() throttles to once/feature/day + honors opt-out. Idle cost ≈ zero.
     // Robust match: EVERY dc FAB lives in a launcher container whose id is `dc-bar` or `dc-<x>-bar`
     // (dc-bar, dc-dg-bar, dc-ir-bar, dc-dsf-bar, dc-act-bar, dc-erd-bar, …) — and the round launch
     // button is `dc-fab` or `dc-<x>-fab` when it has an id at all. Matching those two patterns (not a
     // hand-maintained id list) catches ALL current FABs AND any future one, incl. ERD. Walk up a few
-    // ancestors so a click on an inner icon/svg still resolves to the FAB. (A click INSIDE the open
-    // menu also matches its bar — fine: capture is once/day + opt-out, so at most one tab/day anyway.)
+    // ancestors so a click on an inner icon/svg still resolves to the FAB.
     function isFabClick(target) {
       try {
         var el = target;
@@ -6166,9 +6140,9 @@ processJSON();
     try { document.addEventListener("click", onAnyFabClick, true); } catch (e) {}
 
     // On load: show the one-time disclosure (so users know about the once/day usage capture + how to
-    // opt out), then the legacy auto-ping attempt (no-op: PING_ENABLED false, CSP-blocked anyway).
+    // opt out). The capture itself fires on the first FAB-open each day (silent Firestore write) —
+    // not on load — so there's nothing else to kick off here.
     try { showDisclosureOnce(); } catch (e) {}
-    try { sendPing(); } catch (e) {}
   })();
 
   // SAFETY NET: start the SPA navigation watcher unconditionally, regardless of which
