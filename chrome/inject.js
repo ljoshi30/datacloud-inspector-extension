@@ -5808,6 +5808,23 @@ processJSON();
       if (fmRow) menu.appendChild(fmRow);
       if (dmoOriginRow) menu.appendChild(dmoOriginRow);
 
+      // "Report usage" — the ONLY impact-tracking channel that survives Salesforce CSP (a
+      // user-click navigation; silent auto-pings are CSP-blocked). Opens a tiny "thanks" tab on
+      // our domain that records one anonymous usage and auto-closes. Hidden if the user opted out.
+      let usageRow = null;
+      if (typeof window.__dcReportUsage === "function" &&
+          !(typeof window.__dcUsageIsOptedOut === "function" && window.__dcUsageIsOptedOut())) {
+        const upIconSvg = "<svg width='14' height='14' viewBox='0 0 16 16' fill='none'><path d='M2 13h12M4 11V7M8 11V3M12 11V9' stroke='white' stroke-width='1.6' stroke-linecap='round'/></svg>";
+        usageRow = mkBtn("dc-report-usage-row", "Report usage", "Record one anonymous usage (no data, no org info) so the team can measure adoption. Opens a tab that closes itself.", "linear-gradient(135deg,#0d9488,#0f766e)", upIconSvg, "Anonymous · opens a quick tab");
+        const upSub = usageRow.querySelector("span:last-child");
+        usageRow.onclick = (e) => {
+          e.stopPropagation();
+          let ok = false; try { ok = window.__dcReportUsage(); } catch (err) {}
+          if (upSub) upSub.textContent = ok ? "✓ Thanks — usage recorded" : "Allow pop-ups, then retry";
+        };
+        menu.appendChild(usageRow);
+      }
+
       const fab = document.createElement("button");
       fab.id = "dc-fab";
       fab.title = "Data 360 Inspector";
@@ -5938,8 +5955,14 @@ processJSON();
    */
   (function dcUsagePingModule() {
     var PING_ENDPOINT = "https://d360-usage.ljoshi30-d360.workers.dev/ping";  // live receiver (Cloudflare Worker + D1)
-    var PING_ENABLED  = true;      // LIVE (sign-off + CSP verified). Opt-out + throttle + anonymity still apply.
-    var PING_VERSION  = "1.2.615"; // replaced per build by build.js (coarse, not identifying)
+    // AUTO-PING DISABLED: Salesforce page CSP blocks ALL in-page transports to our domain —
+    // connect-src (fetch/sendBeacon), img-src (image), AND frame-src/sandbox (iframe) are all
+    // locked to an allow-list we're not on (confirmed by testing 2026-10-30). A silent auto-ping
+    // therefore CANNOT work from inside a locked SF page, so we don't pretend it does. Impact is
+    // measured instead via (a) the install-page Cloudflare analytics and (b) a USER-CLICKED
+    // "Report usage" action (a user navigation, which CSP does not block). See dcReportUsage below.
+    var PING_ENABLED  = false;     // auto-ping off (CSP-blocked). The manual Report-usage button still works.
+    var PING_VERSION  = "1.2.617"; // replaced per build by build.js (coarse, not identifying)
     // Which build is this ping coming from? Public build keeps "public"; the @strip block below
     // overrides it to "dev" ONLY in the full/dev build (strip removes the override for public).
     var PING_BUILD    = "public";
@@ -6007,18 +6030,18 @@ processJSON();
     // because PING_ENABLED is false → this never renders in the shipped build.
     function showDisclosureOnce() {
       try {
-        if (!PING_ENABLED || !PING_ENDPOINT) return;        // not live → say nothing
+        if (!PING_ENDPOINT) return;                         // no receiver → nothing to disclose
         if (optedOut()) return;                             // respect an existing opt-out
         if (localStorage.getItem(LS_NOTICE) === "1") return; // already shown
         if (!document.body) { return; }
         var bar = document.createElement("div");
         bar.id = "dc-usage-notice";
-        bar.style.cssText = "position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:2147483647;max-width:460px;background:#111827;color:#e5edff;border:1px solid #334;border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.5);padding:12px 14px;font:12px/1.5 -apple-system,sans-serif;";
+        bar.style.cssText = "position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:2147483647;max-width:480px;background:#111827;color:#e5edff;border:1px solid #334;border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.5);padding:12px 14px;font:12px/1.5 -apple-system,sans-serif;";
         bar.innerHTML = "<div style='display:flex;gap:10px;align-items:flex-start;'>" +
           "<span style='font-size:15px;'>&#9432;</span><div>" +
-          "<b>Data 360 Inspector</b> reports <b>anonymous</b> usage counts (no data, no record/field values, no personal or org info) so the team can measure adoption. " +
+          "<b>Data 360 Inspector</b> records an <b>anonymous</b> usage count about once a day (a random id + tool version + page type only — no record, field, personal, or org data) so the team can measure adoption. A brief tab may open and close itself. " +
           "<a href='#' id='dc-usage-off' style='color:#5eead4;'>Turn off</a> &middot; " +
-          "<a href='#' id='dc-usage-ok' style='color:#94a3b8;'>Dismiss</a></div></div>";
+          "<a href='#' id='dc-usage-ok' style='color:#94a3b8;'>OK</a></div></div>";
         document.body.appendChild(bar);
         var done = function () { try { localStorage.setItem(LS_NOTICE, "1"); } catch (e) {} try { bar.remove(); } catch (e) {} };
         var off = bar.querySelector("#dc-usage-off"), okb = bar.querySelector("#dc-usage-ok");
@@ -6027,9 +6050,75 @@ processJSON();
       } catch (e) {}
     }
 
-    // expose for a future controlled test/flip; calling it today is a no-op (gates off).
-    try { window.__dcUsagePing = function () { return sendPing(); }; } catch (e) {}
-    // On load: show the one-time notice (only if live), then attempt the ping (inert until gates clear).
+    // ── USER-CLICKED "Report usage" — the ONLY channel that survives Salesforce CSP ──────────
+    // A silent auto-ping is CSP-blocked (connect/img/iframe all locked). But a USER-INITIATED
+    // navigation is NOT blocked: window.open() to our beacon page loads under OUR origin, records
+    // one anonymous usage, shows a "thanks" page, and auto-closes. Proven to land (iwindowtest).
+    // Honest tradeoff: a tab briefly opens — that's the cost of the only open channel. Respects
+    // opt-out; NOT throttled (it's an explicit user action, so counting each click is fine).
+    function reportUsage() {
+      if (optedOut()) return false;
+      if (!PING_ENDPOINT) return false;
+      try {
+        var qs = "iid=" + encodeURIComponent(installId()) +
+                 "&v=" + encodeURIComponent(PING_VERSION) +
+                 "&page=" + encodeURIComponent(pingPageType()) +
+                 "&day=" + encodeURIComponent(todayStamp()) +
+                 "&build=" + encodeURIComponent(PING_BUILD) +
+                 "&t=" + todayStamp();
+        var base = PING_ENDPOINT.replace(/\/ping$/, "/beacon");
+        var w = window.open(base + "?" + qs, "_blank");       // user-gesture navigation → not CSP-blocked
+        try { markSent(); } catch (e) {}
+        return !!w;                                           // false if a popup blocker stopped it
+      } catch (e) { return false; }
+    }
+
+    // Auto-capture tied to a REAL user gesture (opening the FAB): fires at most ONCE PER DAY per
+    // browser. This is the design that actually measures daily-active users — a silent auto-ping is
+    // CSP-blocked, and window.open only works inside a user gesture anyway, so the FAB click is the
+    // natural trigger. Respects opt-out + the once/day throttle. The brief tab is the known cost.
+    function maybeReportOnFabOpen() {
+      try {
+        if (optedOut()) return false;         // user choice wins
+        if (sentToday()) return false;        // already captured today → no tab
+        return reportUsage();                 // records + marks sent (opens the quick tab)
+      } catch (e) { return false; }
+    }
+
+    try {
+      window.__dcUsagePing = function () { return sendPing(); };   // auto-ping (CSP-blocked; kept for completeness)
+      window.__dcReportUsage = function () { return reportUsage(); }; // manual button: the working, user-clicked channel
+      window.__dcReportUsageOnFabOpen = function () { return maybeReportOnFabOpen(); }; // auto: once/day on FAB open
+    } catch (e) {}
+    // AUTO-CAPTURE on FAB open (once/day). ONE global click listener covers every FAB (detail, Data
+    // Graph, IR, Data Space, Explorer, Activation, + any future one) without touching each handler.
+    // It fires only on a genuine click of a dc FAB launcher button — which is a user gesture, so
+    // window.open isn't popup-blocked — and maybeReportOnFabOpen() throttles to once/day + honors
+    // opt-out, so it's at most one brief tab per user per day. Idle cost ≈ zero (only acts on a click).
+    function isFabClick(target) {
+      try {
+        var el = target;
+        for (var i = 0; el && i < 8; i++) {
+          var id = el.id || "";
+          // dc FAB launcher buttons / bars (round buttons that open a menu)
+          if (id === "dc-fab" || id === "dc-dg-fab" || id === "dc-ir-fab" || id === "dc-dsf-fab" ||
+              id === "dc-explore-fab" || id === "dc-act-fab" ||
+              (el.getAttribute && /^dc-(dg|ir|dsf|uni)-bar$/.test(id))) return true;
+          el = el.parentElement;
+        }
+      } catch (e) {}
+      return false;
+    }
+    function onAnyFabClick(e) {
+      try {
+        var path = (e.composedPath && e.composedPath()) || [e.target];
+        for (var i = 0; i < path.length; i++) { if (path[i] && isFabClick(path[i])) { maybeReportOnFabOpen(); return; } }
+      } catch (er) {}
+    }
+    try { document.addEventListener("click", onAnyFabClick, true); } catch (e) {}
+
+    // On load: show the one-time disclosure (so users know about the once/day usage capture + how to
+    // opt out), then the legacy auto-ping attempt (no-op: PING_ENABLED false, CSP-blocked anyway).
     try { showDisclosureOnce(); } catch (e) {}
     try { sendPing(); } catch (e) {}
   })();
