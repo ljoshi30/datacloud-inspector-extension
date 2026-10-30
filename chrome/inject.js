@@ -5977,7 +5977,7 @@ processJSON();
     var FS_KEY     = "AIzaSyDoIjca9Hw8IEBScjLVsNlu-crgT3idMTk";   // Firebase Web API key (public by design; rules lock writes to create-only)
     var FS_URL     = "https://firestore.googleapis.com/v1/projects/" + FS_PROJECT + "/databases/" + FS_DB + "/documents/usage?key=" + FS_KEY;
     var PING_ENABLED  = true;      // LIVE — silent Firestore write (no tab). Opt-out + per-feature/day throttle still apply.
-    var PING_VERSION  = "1.2.635"; // replaced per build by build.js (coarse, not identifying)
+    var PING_VERSION  = "1.2.637"; // replaced per build by build.js (coarse, not identifying)
     // Which build is this ping coming from? Public build keeps "public"; the @strip block below
     // overrides it to "dev" ONLY in the full/dev build (strip removes the override for public).
     var PING_BUILD    = "public";
@@ -6070,13 +6070,11 @@ processJSON();
       } catch (e) {}
     }
 
-    // ── USER-CLICKED "Report usage" — the ONLY channel that survives Salesforce CSP ──────────
-    // A silent send is CSP-blocked (connect/img/iframe all locked). The only channel is a
-    // USER-GESTURE window.open() to our beacon page (loads under OUR origin, records, self-closes).
-    // SILENT Firestore write — NO tab, NO navigation, fully automatic. A normal CORS+JSON fetch to
-    // firestore.googleapis.com (CSP-allowed via *.googleapis.com). Writes one doc to the `usage`
-    // collection. Fire-and-forget: we don't need the response. Respects opt-out + per-feature/day
-    // throttle (marked sent only once the request is dispatched; Firestore rules reject malformed).
+    // ── SILENT usage capture — NO tab, NO navigation, fully automatic ─────────────────────────
+    // Our own domain is CSP-blocked on every transport, and window.open always opens a visible tab.
+    // The working channel is a normal CORS+JSON fetch to firestore.googleapis.com (CSP-allowed via
+    // *.googleapis.com) → writes one doc to the `usage` collection, silently. Fire-and-forget: we
+    // don't read the response. Respects opt-out + per-feature/day throttle.
     function reportUsage() {
       if (optedOut()) return false;
       if (!FS_URL) return false;
