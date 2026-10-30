@@ -5793,13 +5793,24 @@ processJSON();
           typeof window.__dcToggleDmoOrigin === "function" &&
           typeof window.__dcDmoOriginCount === "function" && window.__dcDmoOriginCount() > 0) {
         const tagIconSvg = "<svg width='14' height='14' viewBox='0 0 16 16' fill='white'><path d='M2 2h6l6 6-6 6-6-6V2z' fill='none' stroke='white' stroke-width='1.4' stroke-linejoin='round'/><circle cx='5' cy='5' r='1.1' fill='white'/></svg>";
-        const doOnNow = (typeof window.__dcDmoOriginIsOn === "function") && window.__dcDmoOriginIsOn();
-        dmoOriginRow = mkBtn("dc-dmo-origin-row", "Field origin", "Badge each field as Standard (product-given), Custom (created manually), or System (internal)", "linear-gradient(135deg,#f97316,#c2410c)", tagIconSvg, doOnNow ? "On — Standard / Custom / System" : "Off — show each field's origin");
+        dmoOriginRow = mkBtn("dc-dmo-origin-row", "Field origin", "Badge each field as Standard (product-given), Custom (created manually), or System (internal)", "linear-gradient(135deg,#f97316,#c2410c)", tagIconSvg, "");
+        const doTitleEl = dmoOriginRow.querySelector("span:first-child");
         const doSub = dmoOriginRow.querySelector("span:last-child");
+        // Clear ON indicator — green "● ON" on the title + active tint on the row, so it's obvious
+        // the badges are showing (matches the IR module). Paint reflects the live module state.
+        const doPaint = () => {
+          let on = false; try { on = (typeof window.__dcDmoOriginIsOn === "function") && window.__dcDmoOriginIsOn(); } catch (e) {}
+          if (doTitleEl) doTitleEl.innerHTML = "Field origin" + (on ? " <span style='color:#34d399;font-size:11px;font-weight:700'>● ON</span>" : "");
+          if (doSub) doSub.textContent = on ? "On — Standard / Custom / System" : "Off — show each field's origin";
+          dmoOriginRow.style.background = on ? "rgba(52,211,153,.12)" : "#111827";
+        };
+        doPaint();
+        dmoOriginRow.onmouseenter = () => { dmoOriginRow.style.background = "rgba(255,255,255,.07)"; };
+        dmoOriginRow.onmouseleave = () => { doPaint(); };
         dmoOriginRow.onclick = (e) => {
           e.stopPropagation();
-          let on = false; try { on = window.__dcToggleDmoOrigin(); } catch (err) {}
-          if (doSub) doSub.textContent = on ? "On — Standard / Custom / System" : "Off — show each field's origin";
+          try { window.__dcToggleDmoOrigin(); } catch (err) {}
+          doPaint();
         };
       }
 
@@ -5962,7 +5973,7 @@ processJSON();
     // measured instead via (a) the install-page Cloudflare analytics and (b) a USER-CLICKED
     // "Report usage" action (a user navigation, which CSP does not block). See dcReportUsage below.
     var PING_ENABLED  = false;     // auto-ping off (CSP-blocked). The manual Report-usage button still works.
-    var PING_VERSION  = "1.2.623"; // replaced per build by build.js (coarse, not identifying)
+    var PING_VERSION  = "1.2.625"; // replaced per build by build.js (coarse, not identifying)
     // Which build is this ping coming from? Public build keeps "public"; the @strip block below
     // overrides it to "dev" ONLY in the full/dev build (strip removes the override for public).
     var PING_BUILD    = "public";
