@@ -5821,22 +5821,7 @@ processJSON();
       if (fmRow) menu.appendChild(fmRow);
       if (dmoOriginRow) menu.appendChild(dmoOriginRow);
 
-      // "Report usage" — the ONLY impact-tracking channel that survives Salesforce CSP (a
-      // user-click navigation; silent auto-pings are CSP-blocked). Opens a tiny "thanks" tab on
-      // our domain that records one anonymous usage and auto-closes. Hidden if the user opted out.
-      let usageRow = null;
-      if (typeof window.__dcReportUsage === "function" &&
-          !(typeof window.__dcUsageIsOptedOut === "function" && window.__dcUsageIsOptedOut())) {
-        const upIconSvg = "<svg width='14' height='14' viewBox='0 0 16 16' fill='none'><path d='M2 13h12M4 11V7M8 11V3M12 11V9' stroke='white' stroke-width='1.6' stroke-linecap='round'/></svg>";
-        usageRow = mkBtn("dc-report-usage-row", "Report usage", "Record one anonymous usage (no data, no org info) so the team can measure adoption. Opens a tab that closes itself.", "linear-gradient(135deg,#0d9488,#0f766e)", upIconSvg, "Anonymous · opens a quick tab");
-        const upSub = usageRow.querySelector("span:last-child");
-        usageRow.onclick = (e) => {
-          e.stopPropagation();
-          let ok = false; try { ok = window.__dcReportUsage(); } catch (err) {}
-          if (upSub) upSub.textContent = ok ? "✓ Thanks — usage recorded" : "Allow pop-ups, then retry";
-        };
-        menu.appendChild(usageRow);
-      }
+      // (Usage capture is AUTOMATIC + silent on FAB-open — no visible "Report usage" row by design.)
 
       const fab = document.createElement("button");
       fab.id = "dc-fab";
@@ -5979,7 +5964,7 @@ processJSON();
     var FS_KEY     = "AIzaSyDoIjca9Hw8IEBScjLVsNlu-crgT3idMTk";   // Firebase Web API key (public by design; rules lock writes to create-only)
     var FS_URL     = "https://firestore.googleapis.com/v1/projects/" + FS_PROJECT + "/databases/" + FS_DB + "/documents/usage?key=" + FS_KEY;
     var PING_ENABLED  = true;      // LIVE — silent Firestore write (no tab). Opt-out + per-feature/day throttle still apply.
-    var PING_VERSION  = "1.2.659"; // replaced per build by build.js (coarse, not identifying)
+    var PING_VERSION  = "1.2.661"; // replaced per build by build.js (coarse, not identifying)
     // Which build is this ping coming from? Public build keeps "public"; the @strip block below
     // overrides it to "dev" ONLY in the full/dev build (strip removes the override for public).
     var PING_BUILD    = "public";
@@ -6082,12 +6067,16 @@ processJSON();
       if (!FS_URL) return false;
       try {
         var feature = pingPageType();
+        // org = the Salesforce my-domain host (semi-identifying: points to an org, but NOT a person).
+        // Lets the report count "how many ORGS use it". No username / record / field data.
+        var org = ""; try { org = String(location.hostname || "").replace(/\.lightning\.force\.com$|\.my\.salesforce\.com$/i, "").slice(0, 80); } catch (e) {}
         var payload = { fields: {
           iid:   { stringValue: String(installId()) },
           v:     { stringValue: String(PING_VERSION) },
           page:  { stringValue: String(feature) },
           day:   { stringValue: String(todayStamp()) },
           build: { stringValue: String(PING_BUILD) },
+          org:   { stringValue: org },
           ts:    { stringValue: new Date().toISOString() }
         }};
         fetch(FS_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), keepalive: true })
@@ -6143,10 +6132,10 @@ processJSON();
     }
     try { document.addEventListener("click", onAnyFabClick, true); } catch (e) {}
 
-    // On load: show the one-time disclosure (so users know about the once/day usage capture + how to
-    // opt out). The capture itself fires on the first FAB-open each day (silent Firestore write) —
-    // not on load — so there's nothing else to kick off here.
-    try { showDisclosureOnce(); } catch (e) {}
+    // On load: NO in-tool disclosure popup (per decision — silent in-tool). Disclosure instead lives
+    // on the install page's Privacy section, and __dcUsageOptOut() remains available as the opt-out.
+    // The capture fires on the first FAB-open per feature per day (silent Firestore write).
+    // (showDisclosureOnce is retained but intentionally NOT called here.)
   })();
 
   // SAFETY NET: start the SPA navigation watcher unconditionally, regardless of which
