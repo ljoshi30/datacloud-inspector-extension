@@ -5964,13 +5964,14 @@ processJSON();
     var FS_KEY     = "AIzaSyDoIjca9Hw8IEBScjLVsNlu-crgT3idMTk";   // Firebase Web API key (public by design; rules lock writes to create-only)
     var FS_URL     = "https://firestore.googleapis.com/v1/projects/" + FS_PROJECT + "/databases/" + FS_DB + "/documents/usage?key=" + FS_KEY;
     var PING_ENABLED  = true;      // LIVE — silent Firestore write (no tab). Opt-out + per-feature/day throttle still apply.
-    var PING_VERSION  = "1.2.663"; // replaced per build by build.js (coarse, not identifying)
+    var PING_VERSION  = "1.2.675"; // replaced per build by build.js (coarse, not identifying)
     // Which build is this ping coming from? Public build keeps "public"; the @strip block below
     // overrides it to "dev" ONLY in the full/dev build (strip removes the override for public).
     var PING_BUILD    = "public";
     /* [in-development features removed from public build] */
     var LS_ID    = "dc_usage_iid";   // random per-browser install id (anonymous)
-    var LS_LAST  = "dc_usage_last";  // last-sent day stamp (throttle)
+    var LS_LAST  = "dc_usage_last";  // last-sent day stamp (throttle) — set ONLY after a confirmed HTTP success
+    var _inFlight = {};              // per-feature in-flight guard (prevents duplicate concurrent sends)
     var LS_OPTOUT = "dc_usage_optout"; // GATE 3: user opt-out — "1" = never ping (user choice honored)
     var LS_NOTICE = "dc_usage_noticed"; // "1" = the one-time disclosure notice has been shown
 
@@ -6019,16 +6020,33 @@ processJSON();
       // NOTE: Math.random fallback only in the live browser — this file never runs Math.random in tests.
       try { return "i" + String(Date.now()) + "_" + Math.floor(Math.random() * 1e9).toString(36); } catch (e) { return "i_anon"; }
     }
+    // In-memory fallbacks for when localStorage is UNAVAILABLE (VDI lockdowns, strict privacy modes,
+    // some incognito/3rd-party-storage-blocked contexts). Without these, every storage-blocked user
+    // would collapse to a single constant id ("i_nostore") — merging many real users into one AND
+    // never persisting the throttle. Instead we mint a per-page-session random id and keep the throttle
+    // in memory for the life of the page. Trade-off (documented): a storage-blocked user is counted
+    // fresh each full page load rather than once/day — honest over-count beats invisible under-count,
+    // and the report still sees distinct real people instead of one fake "i_nostore".
+    var _memId = null, _memSent = {};
     function installId() {
-      try { var v = localStorage.getItem(LS_ID); if (!v) { v = randId(); localStorage.setItem(LS_ID, v); } return v; } catch (e) { return "i_nostore"; }
+      try { var v = localStorage.getItem(LS_ID); if (!v) { v = randId(); localStorage.setItem(LS_ID, v); } return v; }
+      catch (e) { if (!_memId) _memId = randId(); return _memId; }   // storage blocked → stable for THIS page session
     }
     function todayStamp() { try { return new Date().toISOString().slice(0, 10); } catch (e) { return ""; } }
     // PER-FEATURE, per-day throttle: one ping per (feature, day) per browser. So a user who opens
     // the DMO FAB and the Segment FAB the same day sends TWO pings (one per feature), but reopening
-    // the SAME feature's FAB all day sends only one. Key is namespaced by feature + day.
+    // the SAME feature's FAB all day sends only one. Key is namespaced by feature + day. If storage is
+    // blocked, the throttle degrades to an in-memory map (once per feature per PAGE SESSION) — still
+    // prevents spam, just resets on a full reload.
     function throttleKey(feature) { return LS_LAST + "::" + (feature || "other") + "::" + todayStamp(); }
-    function sentToday(feature) { try { return localStorage.getItem(throttleKey(feature)) === "1"; } catch (e) { return true; } } // on error, assume sent → don't spam
-    function markSent(feature) { try { localStorage.setItem(throttleKey(feature), "1"); } catch (e) {} }
+    function sentToday(feature) {
+      var k = throttleKey(feature);
+      try { return localStorage.getItem(k) === "1"; } catch (e) { return _memSent[k] === true; }
+    }
+    function markSent(feature) {
+      var k = throttleKey(feature);
+      try { localStorage.setItem(k, "1"); } catch (e) { _memSent[k] = true; }
+    }
 
 
     // ONE-TIME disclosure notice — honest + respectful. Shown only when the ping is actually LIVE
@@ -6062,11 +6080,21 @@ processJSON();
     // The working channel is a normal CORS+JSON fetch to firestore.googleapis.com (CSP-allowed via
     // *.googleapis.com) → writes one doc to the `usage` collection, silently. Fire-and-forget: we
     // don't read the response. Respects opt-out + per-feature/day throttle.
+    // Fire one usage ping. Returns a Promise<bool> that resolves TRUE only on a confirmed HTTP success.
+    // CRITICAL: the day/feature throttle (markSent) is set ONLY after the write actually succeeds — so a
+    // request that fails (e.g. CSP-blocked on a strict page) does NOT burn the throttle, and the user can
+    // still be captured later the same day on a page where the write is allowed. (Previously markSent ran
+    // unconditionally right after firing the fetch, so one CSP-blocked attempt silently locked the user
+    // out for the rest of the day — the "new user never captured" bug.)
     function reportUsage() {
-      if (optedOut()) return false;
-      if (!FS_URL) return false;
+      if (!PING_ENABLED) return Promise.resolve(false);   // master kill-switch (documented gate — now ENFORCED)
+      if (optedOut()) return Promise.resolve(false);
+      if (!FS_URL) return Promise.resolve(false);
+      var feature;
       try {
-        var feature = pingPageType();
+        feature = pingPageType();
+        if (_inFlight[feature]) return Promise.resolve(false);   // a send for this feature is already pending
+        _inFlight[feature] = true;
         // org = the Salesforce my-domain host (semi-identifying: points to an org, but NOT a person).
         // Lets the report count "how many ORGS use it". No username / record / field data.
         var org = ""; try { org = String(location.hostname || "").replace(/\.lightning\.force\.com$|\.my\.salesforce\.com$/i, "").slice(0, 80); } catch (e) {}
@@ -6079,12 +6107,23 @@ processJSON();
           org:   { stringValue: org },
           ts:    { stringValue: new Date().toISOString() }
         }};
-        fetch(FS_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), keepalive: true })
-          /* [in-development features removed from public build] */
-          .catch(function () {});                  // fire-and-forget; silent on any error (public build: no logging)
-        try { markSent(feature); } catch (e) {}    // one write per feature/day
-        return true;
-      } catch (e) { return false; }
+        return fetch(FS_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), keepalive: true })
+          .then(function (r) {
+            _inFlight[feature] = false;
+            if (r && r.ok) {
+              try { markSent(feature); } catch (e) {}            // throttle ONLY on confirmed success
+              /* [in-development features removed from public build] */
+              return true;
+            }
+            /* [in-development features removed from public build] */
+            return false;                                        // non-2xx → do NOT burn the throttle
+          })
+          .catch(function (err) {
+            _inFlight[feature] = false;
+            /* [in-development features removed from public build] */
+            return false;                                        // network/CSP error → do NOT burn the throttle
+          });
+      } catch (e) { if (feature) _inFlight[feature] = false; return Promise.resolve(false); }
     }
 
     // Auto-capture tied to a user gesture (opening the FAB): at most ONCE PER FEATURE PER DAY per
@@ -6119,6 +6158,9 @@ processJSON();
         for (var i = 0; el && i < 8; i++) {
           var id = (el.id || "");
           if (/^dc-([a-z0-9]+-)?bar$/.test(id) || /^dc-([a-z0-9]+-)?fab$/.test(id)) return true;
+          // the "open in new tab ⧉" launchers are standalone (attached to <body>, not inside a *-bar),
+          // so their ids don't match the bar/fab pattern — list them explicitly so ⧉-only use is counted.
+          if (id === "dc-list-newtab" || id === "dc-nav-newtab") return true;
           el = el.parentElement;
         }
       } catch (e) {}
@@ -6126,11 +6168,21 @@ processJSON();
     }
     function onAnyFabClick(e) {
       try {
+        if (window.__dcUsageOff) return;   // honor a later disable without needing to unbind
         var path = (e.composedPath && e.composedPath()) || [e.target];
         for (var i = 0; i < path.length; i++) { if (path[i] && isFabClick(path[i])) { maybeReportOnFabOpen(); return; } }
       } catch (er) {}
     }
-    try { document.addEventListener("click", onAnyFabClick, true); } catch (e) {}
+    // RUN-ONCE listener: the whole file re-executes when the user re-pastes/re-clicks the bookmarklet,
+    // and onAnyFabClick is a fresh closure each time, so re-adding it would STACK duplicate document
+    // listeners (a memory/perf leak over a long VDI session). A stable window flag binds it exactly once
+    // per page; later re-runs skip the add. (The handler also bails on window.__dcUsageOff.)
+    try {
+      if (!window.__dcUsageClickBound) {
+        document.addEventListener("click", onAnyFabClick, true);
+        window.__dcUsageClickBound = true;
+      }
+    } catch (e) {}
 
     // On load: NO in-tool disclosure popup (per decision — silent in-tool). Disclosure instead lives
     // on the install page's Privacy section, and __dcUsageOptOut() remains available as the opt-out.
