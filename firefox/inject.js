@@ -5969,7 +5969,7 @@ processJSON();
     // (so permissive orgs never see a tab). window.open must fire synchronously on the click gesture.
     var BEACON_BASE = "https://d360-usage.ljoshi30-d360.workers.dev/beacon";
     var PING_ENABLED  = true;      // LIVE — silent Firestore write (no tab). Opt-out + per-feature/day throttle still apply.
-    var PING_VERSION  = "1.2.678"; // replaced per build by build.js (coarse, not identifying)
+    var PING_VERSION  = "1.2.680"; // replaced per build by build.js (coarse, not identifying)
     // Which build is this ping coming from? Public build keeps "public"; the @strip block below
     // overrides it to "dev" ONLY in the full/dev build (strip removes the override for public).
     var PING_BUILD    = "public";
@@ -6056,9 +6056,10 @@ processJSON();
     // ── Per-ORG "silent write is blocked here" memory (the learn-then-adapt core) ─────────────────
     // We only open a tab (beacon) in orgs we KNOW block the silent fetch — so permissive orgs never
     // flash a tab. The flag is namespaced per org host so moving between orgs re-learns correctly.
-    var _memBlocked = {};
+    var _memBlocked = {}, _memBeaconDead = {}, _beaconConfirmed = {};
     function orgHost() { try { return String(location.hostname || "").slice(0, 80); } catch (e) { return ""; } }
     function blockedKey() { return "dc_usage_blocked::" + orgHost(); }
+    function beaconDeadKey() { return "dc_usage_beacon_dead::" + orgHost(); }
     function orgKnownBlocked() {
       try { return localStorage.getItem(blockedKey()) === "1"; } catch (e) { return _memBlocked[blockedKey()] === true; }
     }
@@ -6066,6 +6067,32 @@ processJSON();
       try { localStorage.setItem(blockedKey(), "1"); } catch (e) { _memBlocked[blockedKey()] = true; }
       /* [in-development features removed from public build] */
     }
+    // Beacon "dead" for this org — set when a beacon tab was opened but NEVER confirmed back (i.e. the
+    // destination is blocked by a corporate web filter / shows a block page). Once dead, we stop opening
+    // tabs here entirely, so a user sees the filter's "Unauthorized Access" flash AT MOST ONCE per org.
+    function beaconDead() {
+      try { return localStorage.getItem(beaconDeadKey()) === "1"; } catch (e) { return _memBeaconDead[beaconDeadKey()] === true; }
+    }
+    function markBeaconDead() {
+      try { localStorage.setItem(beaconDeadKey(), "1"); } catch (e) { _memBeaconDead[beaconDeadKey()] = true; }
+      /* [in-development features removed from public build] */
+    }
+    // Listen ONCE for the /beacon page's confirmation. If it arrives, the beacon truly reached our worker
+    // → clear any "dead" flag and remember it works. (Bound once per page via a window flag.)
+    try {
+      if (!window.__dcBeaconMsgBound) {
+        window.__dcBeaconMsgBound = true;
+        window.addEventListener("message", function (ev) {
+          try {
+            if (ev && ev.data && ev.data.__dcBeacon === "ok") {
+              _beaconConfirmed[orgHost()] = true;
+              try { localStorage.removeItem(beaconDeadKey()); } catch (e) {}
+              /* [in-development features removed from public build] */
+            }
+          } catch (e) {}
+        }, false);
+      }
+    } catch (e) {}
     // Build the beacon URL carrying the same anonymous fields as the direct ping.
     function beaconUrl(feature) {
       var qs = "?iid=" + encodeURIComponent(installId()) +
@@ -6081,9 +6108,17 @@ processJSON();
     // handle came back (best-effort — we can't read the cross-origin result, so we mark-sent optimistically).
     function beaconOpen(feature) {
       try {
+        _beaconConfirmed[orgHost()] = false;   // reset; the /beacon page will flip this via postMessage
         var w = window.open(beaconUrl(feature), "dc_usage_beacon", "width=360,height=140,left=" + (screen.width - 380) + ",top=" + (screen.height - 220));
         if (w) {
           /* [in-development features removed from public build] */
+          // If the worker's /beacon page doesn't confirm within 4s, the destination was blocked (corporate
+          // web filter / block page) → mark the beacon dead for this org so we NEVER flash a tab here again.
+          try {
+            setTimeout(function () {
+              if (!_beaconConfirmed[orgHost()]) markBeaconDead();
+            }, 4000);
+          } catch (e) {}
           return true;
         }
       } catch (e) {}
@@ -6188,7 +6223,15 @@ processJSON();
           return false;
         }
         if (orgKnownBlocked()) {
-          // locked org → beacon tab, SYNCHRONOUS (we're inside the click gesture right now).
+          // locked org. If the beacon was already proven DEAD here (corporate filter blocks the
+          // destination), do NOT open a tab — the user would just get a scary "Unauthorized Access"
+          // flash with no capture. Give up silently (this org simply can't be measured externally).
+          if (beaconDead()) {
+            /* [in-development features removed from public build] */
+            return false;
+          }
+          // beacon not yet known-dead → try it ONCE (synchronous, inside the click gesture). If it turns
+          // out blocked (no confirmation in 4s), beaconOpen marks it dead so this is the last flash here.
           if (beaconOpen(feature)) { try { markSent(feature); } catch (e) {} return true; }
           return false;                            // popup blocked → not marked, retry next click
         }
