@@ -5963,8 +5963,13 @@ processJSON();
     var FS_DB      = "default";    // this project's actual DB id (no parens — confirmed by test)
     var FS_KEY     = "AIzaSyDoIjca9Hw8IEBScjLVsNlu-crgT3idMTk";   // Firebase Web API key (public by design; rules lock writes to create-only)
     var FS_URL     = "https://firestore.googleapis.com/v1/projects/" + FS_PROJECT + "/databases/" + FS_DB + "/documents/usage?key=" + FS_KEY;
+    // Fallback capture for CSP/CASB-LOCKED orgs where the silent Firestore write is blocked: navigate a
+    // tab to this worker's /beacon (top-level navigation crosses where a background fetch can't); the
+    // worker writes the doc server-side. Used ONLY after we've LEARNED this org blocks the silent write
+    // (so permissive orgs never see a tab). window.open must fire synchronously on the click gesture.
+    var BEACON_BASE = "https://d360-usage.ljoshi30-d360.workers.dev/beacon";
     var PING_ENABLED  = true;      // LIVE — silent Firestore write (no tab). Opt-out + per-feature/day throttle still apply.
-    var PING_VERSION  = "1.2.675"; // replaced per build by build.js (coarse, not identifying)
+    var PING_VERSION  = "1.2.678"; // replaced per build by build.js (coarse, not identifying)
     // Which build is this ping coming from? Public build keeps "public"; the @strip block below
     // overrides it to "dev" ONLY in the full/dev build (strip removes the override for public).
     var PING_BUILD    = "public";
@@ -6048,6 +6053,43 @@ processJSON();
       try { localStorage.setItem(k, "1"); } catch (e) { _memSent[k] = true; }
     }
 
+    // ── Per-ORG "silent write is blocked here" memory (the learn-then-adapt core) ─────────────────
+    // We only open a tab (beacon) in orgs we KNOW block the silent fetch — so permissive orgs never
+    // flash a tab. The flag is namespaced per org host so moving between orgs re-learns correctly.
+    var _memBlocked = {};
+    function orgHost() { try { return String(location.hostname || "").slice(0, 80); } catch (e) { return ""; } }
+    function blockedKey() { return "dc_usage_blocked::" + orgHost(); }
+    function orgKnownBlocked() {
+      try { return localStorage.getItem(blockedKey()) === "1"; } catch (e) { return _memBlocked[blockedKey()] === true; }
+    }
+    function markOrgBlocked() {
+      try { localStorage.setItem(blockedKey(), "1"); } catch (e) { _memBlocked[blockedKey()] = true; }
+      /* [in-development features removed from public build] */
+    }
+    // Build the beacon URL carrying the same anonymous fields as the direct ping.
+    function beaconUrl(feature) {
+      var qs = "?iid=" + encodeURIComponent(installId()) +
+               "&v=" + encodeURIComponent(String(PING_VERSION)) +
+               "&page=" + encodeURIComponent(feature) +
+               "&day=" + encodeURIComponent(todayStamp()) +
+               "&build=" + encodeURIComponent(String(PING_BUILD)) +
+               "&org=" + encodeURIComponent(orgHost().replace(/\.lightning\.force\.com$|\.my\.salesforce\.com$/i, ""));
+      return BEACON_BASE + qs;
+    }
+    // Open the beacon tab SYNCHRONOUSLY (must be inside the click gesture or the popup blocker kills it).
+    // The worker writes the doc server-side and the page auto-closes (~400ms). Returns true if a window
+    // handle came back (best-effort — we can't read the cross-origin result, so we mark-sent optimistically).
+    function beaconOpen(feature) {
+      try {
+        var w = window.open(beaconUrl(feature), "dc_usage_beacon", "width=360,height=140,left=" + (screen.width - 380) + ",top=" + (screen.height - 220));
+        if (w) {
+          /* [in-development features removed from public build] */
+          return true;
+        }
+      } catch (e) {}
+      return false;
+    }
+
 
     // ONE-TIME disclosure notice — honest + respectful. Shown only when the ping is actually LIVE
     // (no point disclosing something that's off), only once (LS_NOTICE), and never if already
@@ -6120,22 +6162,37 @@ processJSON();
           })
           .catch(function (err) {
             _inFlight[feature] = false;
+            // The silent write was blocked (CSP/CASB). REMEMBER this org blocks it, so the NEXT click
+            // uses the beacon-tab fallback (which must open synchronously on the gesture — can't do it
+            // from here, this is async and the user-gesture is already gone). Do NOT burn the throttle.
+            try { markOrgBlocked(); } catch (e2) {}
             /* [in-development features removed from public build] */
-            return false;                                        // network/CSP error → do NOT burn the throttle
+            return false;
           });
       } catch (e) { if (feature) _inFlight[feature] = false; return Promise.resolve(false); }
     }
 
-    // Auto-capture tied to a user gesture (opening the FAB): at most ONCE PER FEATURE PER DAY per
-    // browser. The Firestore write is silent (no tab), so this just needs the throttle + opt-out.
+    // Auto-capture on FAB open — at most ONCE PER FEATURE PER DAY. LEARN-THEN-ADAPT:
+    //   • Org NOT known-blocked → try the SILENT Firestore write (no tab). Most users, permissive orgs.
+    //   • Org KNOWN-blocked (we learned the silent write fails here) → open the BEACON TAB synchronously
+    //     on THIS click gesture (the only way to capture in a CSP/CASB-locked org). Brief flash, once/day.
+    // The very FIRST click in a locked org loses its capture to the silent attempt (which then learns the
+    // block) — every subsequent click that day uses the beacon. Net: permissive orgs never flash a tab;
+    // locked orgs flash ~once/feature/day and ARE captured.
     function maybeReportOnFabOpen() {
       try {
         if (optedOut()) return false;              // user choice wins
-        if (sentToday(pingPageType())) {           // THIS feature already captured today
+        var feature = pingPageType();
+        if (sentToday(feature)) {                  // THIS feature already captured today
           /* [in-development features removed from public build] */
           return false;
         }
-        return reportUsage();                      // silent write + marks sent for this feature
+        if (orgKnownBlocked()) {
+          // locked org → beacon tab, SYNCHRONOUS (we're inside the click gesture right now).
+          if (beaconOpen(feature)) { try { markSent(feature); } catch (e) {} return true; }
+          return false;                            // popup blocked → not marked, retry next click
+        }
+        return reportUsage();                      // silent write (may learn-and-block for next time)
       } catch (e) { return false; }
     }
 
